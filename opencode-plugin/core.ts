@@ -232,6 +232,8 @@ export type CrewConfig = {
   cleanupLimit: number
   /** required (по умолчанию) — замок только после зелёной предпроверки на той же вершине; off — merge берёт замок сразу, как было до задачи 005 */
   mergePrecheck: "off" | "required"
+  /** on — замок вливания привязан к задаче: merge другой задачи тем же держателем отказывает (merge_precheck: off; при required ворота это делают всегда); off — как было */
+  mergeLockPerTask: boolean
   /** дополнительные поля задачи, объявленные проектом (task_extra_fields) */
   extraFields: ExtraField[]
   /** режимы ответа на вопросы сессий по типам (answer_mode, задача 007): принятые записи; пусто — все вопросы владельцу */
@@ -368,6 +370,7 @@ export function loadConfig(dir: string): CrewConfig {
     acceptedSlot: oneOf(j.accepted_slot, ["hold", "free"] as const, "free"),
     cleanupLimit: num(j.cleanup_limit, 10),
     mergePrecheck: oneOf(j.merge_precheck, ["off", "required"] as const, "required"),
+    mergeLockPerTask: oneOf(j.merge_lock_per_task, ["off", "on"] as const, "off") === "on",
     extraFields: extraFieldsOf(j.task_extra_fields),
     answerMode: normalizeAnswerMode(j.answer_mode).map,
     answerMax: normalizeAnswerMax(j.answer_max),
@@ -2090,7 +2093,8 @@ export function makeTools(host: CrewHost): CrewTool[] {
             if ("text" in g) return { content: g.text }
             return { content: `Замок вливания проекта ${project} твой, выдан на вершину ${tcfg.targetBranch} ${g.granted}. Влей ${t.branch ? `ветку ${t.branch}` : "работу"} (кандидата, проверенного на этой вершине) в ${tcfg.targetBranch}, запушь и вызови crew_task {action: "accept", n: ${t.n}, checks: {...}${t.branch ? "" : ', commit: "<хэш>"'}}. ${LOCK_RULE}` }
           }
-          const r = takeMergeLock(project, me.session, t.n)
+          const r = takeMergeLock(project, me.session, t.n, tcfg.mergeLockPerTask)
+          if (!r.ok && r.holder.session === me.session) return { content: `Замок вливания проекта ${project} у тебя уже для задачи #${r.holder.n}: сначала accept, rework или unlock по ней (в проекте merge_lock_per_task: on).` }
           if (!r.ok) return { content: `Замок вливания проекта ${project} у приёмщика задачи #${r.holder.n} (сессия ${r.holder.session}) с ${hhmm(r.holder.at)}. Дождись (спроси позже ещё раз) — вливать одновременно нельзя.` }
           taskEvent(t, me.session, undefined, "замок вливания взят")
           return { content: `Замок вливания проекта ${project} твой. Влей ${t.branch ? `ветку ${t.branch}` : "работу"} в ${tcfg.targetBranch}, запушь и вызови crew_task {action: "accept", n: ${t.n}, checks: {...}${t.branch ? "" : ', commit: "<хэш>"'}}. ${LOCK_RULE}` }
@@ -2108,8 +2112,8 @@ export function makeTools(host: CrewHost): CrewTool[] {
           t.rework_sync = sync
           t.rework_note = text
           t.reviewer_role = keyOf(me)
-          const lockHeld = holdsMergeLock(project, me.session)
-          releaseMergeLock(project, me.session)
+          const lockHeld = holdsMergeLock(project, me.session, t.n)
+          releaseMergeLock(project, me.session, t.n)
           const lockNote = lockHeld ? ` ${LOCK_FREED}` : ""
           if (t.review_qid) settleObligation(me.session, t.review_qid)
           markPrecheckStale(t, sync ? "возвращена исполнителю (синхронизация)" : "возвращена исполнителю (доработка)")
@@ -2127,8 +2131,9 @@ export function makeTools(host: CrewHost): CrewTool[] {
         }
         if (action === "accept") {
           if (t.status !== "reviewing") return { content: `Принять можно задачу на приёмке (сейчас ${statusRu(t.status)}).` }
-          const viaLanded = !holdsMergeLock(project, me.session) && landedFresh(t) // замок отпущен службой после слияния проверенного кандидата
-          if (!holdsMergeLock(project, me.session) && !viaLanded) return { content: `Сначала замок вливания: crew_task {action: "merge", n: ${t.n}} — вливает один приёмщик за раз.` }
+          const lockNo = tcfg.mergeLockPerTask ? t.n : undefined // merge_lock_per_task: замок должен быть для этой задачи
+          const viaLanded = !holdsMergeLock(project, me.session, lockNo) && landedFresh(t) // замок отпущен службой после слияния проверенного кандидата
+          if (!holdsMergeLock(project, me.session, lockNo) && !viaLanded) return { content: `Сначала замок вливания: crew_task {action: "merge", n: ${t.n}} — вливает один приёмщик за раз.` }
           const checks: Record<string, string> = { ...(t.checks ?? {}) } // отмеченные по ходу (check) засчитываются
           for (const [k, v] of Object.entries(input.checks ?? {})) if (String(v ?? "").trim()) checks[k] = String(v).trim()
           const missing = acc.filter((a) => a.required && !checks[a.id])
@@ -2160,8 +2165,8 @@ export function makeTools(host: CrewHost): CrewTool[] {
           delete t.checking
           t.commit = commit
           t.merged_head = m.head
-          const lockFreed = !viaLanded && holdsMergeLock(project, me.session)
-          if (!viaLanded) releaseMergeLock(project, me.session) // замок другой задачи этой сессии при accept по «отпущено службой» не трогаем
+          const lockFreed = !viaLanded && holdsMergeLock(project, me.session, t.n)
+          if (!viaLanded) releaseMergeLock(project, me.session, t.n) // замок другой задачи этой сессии при accept по «отпущено службой» не трогаем
           taskEvent(t, me.session, "accepted", `принята: ${m.how}`)
           if (t.precheck) {
             // запись предпроверки остаётся историей: на какой вершине целевой ветки принята задача
@@ -2243,9 +2248,9 @@ ${lockStillYours(stillHeld.n)}` : "") }
           log(`window file release of #${t.n} failed: ${e}`)
         }
         host.posted(propagateToParent(t))
-        const lockHeld = !!t.reviewer && holdsMergeLock(project, t.reviewer)
+        const lockHeld = !!t.reviewer && holdsMergeLock(project, t.reviewer, t.n)
         if (t.reviewer) {
-          releaseMergeLock(project, t.reviewer)
+          releaseMergeLock(project, t.reviewer, t.n)
           if (t.review_qid) settleObligation(t.reviewer, t.review_qid)
         }
         if (t.executor) {

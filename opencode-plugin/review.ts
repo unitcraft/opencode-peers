@@ -28,7 +28,8 @@ const MERGE_STALE_MS = 2 * 3600_000
 const mergeFile = (project: string) => path.join(ROLES, `${safeKey(project)}_merge.json`)
 export const mergeHolder = (project: string) => readJson<MergeLock>(mergeFile(project))
 
-export function takeMergeLock(project: string, session: string, n: number): { ok: true } | { ok: false; holder: MergeLock } {
+/** perTask (merge_lock_per_task: on): тот же держатель замка для другой открытой задачи — отказ, а не молчаливая подмена номера (задача 006) */
+export function takeMergeLock(project: string, session: string, n: number, perTask = false): { ok: true } | { ok: false; holder: MergeLock } {
   mkdirSync(ROLES, { recursive: true })
   const file = mergeFile(project)
   const mine = JSON.stringify({ session, n, at: Date.now() })
@@ -38,6 +39,7 @@ export function takeMergeLock(project: string, session: string, n: number): { ok
   } catch {}
   const cur = readJson<MergeLock>(file)
   if (cur?.session === session) {
+    if (perTask && cur.n !== n && !mergeLockAbandoned(project, cur)) return { ok: false, holder: cur }
     writeFileSync(file, mine) // тот же держатель — обновить время и номер
     return { ok: true }
   }
@@ -66,11 +68,16 @@ function mergeLockAbandoned(project: string, lock: MergeLock): boolean {
   return !holder || !mayWakeCard(holder)
 }
 
-export function releaseMergeLock(project: string, session: string) {
+/** n — номер задачи: замок другой задачи этой сессии не снимается (задача 006); без n — по одной сессии, как раньше (брошенный замок, служба) */
+export function releaseMergeLock(project: string, session: string, n?: number) {
   const file = mergeFile(project)
-  if (readJson<MergeLock>(file)?.session === session) rmSync(file, { force: true })
+  const cur = readJson<MergeLock>(file)
+  if (cur?.session === session && (n === undefined || cur.n === n)) rmSync(file, { force: true })
 }
-export const holdsMergeLock = (project: string, session: string) => mergeHolder(project)?.session === session
+export const holdsMergeLock = (project: string, session: string, n?: number) => {
+  const h = mergeHolder(project)
+  return h?.session === session && (n === undefined || h.n === n)
+}
 
 /** Каталог репозитория задачи: worktree (если ещё есть) или каталог, где задачу ставили. */
 export const repoDir = (t: Task) => (t.worktree && existsSync(t.worktree) ? t.worktree : t.directory)

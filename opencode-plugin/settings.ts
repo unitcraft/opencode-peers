@@ -220,22 +220,50 @@ export function rawSettingsFor(dir: string, projects: Projects, local: Record<st
 }
 
 // Прежняя форма: `.opencode/crew-harness.json` вверх от каталога вкладки, рабочая копия.
-function legacyWalk(dir: string): any {
+// Битый файл (не JSON) молча давал пустые настройки, и защитные ключи (merge_precheck: required и др.) выключались без
+// сообщения (задача 006): теперь берутся последние хорошие настройки этого файла, а о файле пишется в журнал и в crew_doctor.
+const legacyGood = new Map<string, any>()
+const legacyBroken = new Map<string, string>() // файл → когда замечен битым
+function legacyFile(dir: string): string | undefined {
   let d = dir ? path.resolve(dir) : ""
   for (let i = 0; d && i < 32; i++) {
     const f = path.join(d, SETTINGS_FILE)
-    if (existsSync(f)) {
-      try {
-        return JSON.parse(readFileSync(f, "utf8").replace(/^\uFEFF/, ""))
-      } catch {
-        return {}
-      }
-    }
+    if (existsSync(f)) return f
     const up = path.dirname(d)
     if (up === d) break
     d = up
   }
-  return {}
+  return undefined
+}
+function legacyWalk(dir: string): any {
+  const f = legacyFile(dir)
+  if (!f) return {}
+  try {
+    const raw = JSON.parse(readFileSync(f, "utf8").replace(/^﻿/, ""))
+    legacyGood.set(f, raw)
+    legacyBroken.delete(f)
+    return raw
+  } catch {
+    const last = legacyGood.get(f)
+    if (!legacyBroken.has(f)) log(`settings file ${f} is not valid JSON -- ${last ? "using the last good settings" : "defaults"}`)
+    legacyBroken.set(f, new Date().toISOString())
+    return last ?? {}
+  }
+}
+/** Битые файлы настроек прежней формы (проекты без репозитория настроек): проверка на месте, для crew_doctor. */
+function legacyProblems(projects: Projects): string[] {
+  const out: string[] = []
+  for (const p of projects) {
+    if (p.dir) continue
+    const f = legacyFile(p.rootPath ?? p.root)
+    if (!f) continue
+    try {
+      JSON.parse(readFileSync(f, "utf8").replace(/^﻿/, ""))
+    } catch {
+      out.push(`проект ${p.name}: ${f} — не JSON; ${legacyGood.has(f) ? "действуют последние хорошие настройки" : "настройки по умолчанию, защитные ключи (merge_precheck и др.) не заданы"}; исправь файл`)
+    }
+  }
+  return out
 }
 
 /** Файл настроек в рабочей копии папки настроек (то, что правит crew_config set; действует после коммита). */
@@ -282,6 +310,7 @@ export function settingsProblems(projects: Projects): string[] {
     if (raw?.merge_precheck !== "off" && Array.isArray(raw?.acceptance))
       for (const a of raw.acceptance) if (a && typeof a.id === "string" && describesAcceptanceOrder(a.text)) out.push(`проект ${p.name}: шаг ${a.id} описывает порядок приёмки, он задаётся плагином (crew_help, ПРИЁМКА): оставь в шаге только проектные команды и критерии`)
   }
+  out.push(...legacyProblems(projects))
   const old = projects.filter((p) => !p.dir).map((p) => p.name)
   if (old.length) out.push(`проекты ${old.join(", ")} заданы прежней формой опций (имя → корень); новая — список папок настроек: "projects": ["<папка с .opencode/crew-harness.json>"], файл называет проект и root (doc/archive/plans/002-tasks.md, «Где живут настройки проекта»)`)
   return [...new Set(out)]

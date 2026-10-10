@@ -279,7 +279,7 @@ export function unlockMerge(t: Task, session: string): string {
   if (!h) return `Замка вливания проекта ${t.project} нет — отпускать нечего.`
   if (h.session !== session) return `Замок вливания проекта ${t.project} не твой (держит приёмщик задачи #${h.n}); чужой замок unlock не снимает.`
   if (h.n !== t.n) return `Твой замок вливания — для задачи #${h.n}, а не #${t.n}: unlock {n: ${h.n}}.`
-  releaseMergeLock(t.project, session)
+  releaseMergeLock(t.project, session, t.n)
   markPrecheckStale(t, "замок отпущен")
   taskEvent(t, session, undefined, "замок вливания отпущен (unlock); предпроверка устарела")
   return `Замок вливания проекта ${t.project} отпущен. Предпроверка устарела (замок отпущен): чтобы вливать, начни заново — crew_task {action: "precheck", n: ${t.n}}.`
@@ -305,7 +305,7 @@ export async function releaseLandedLock(project: string, target: string): Promis
   if (!holdsFor(project, lock.session, lock.n, lock.at)) return undefined // за время чтения замок сменился
   const cur = loadTask(project, lock.n)
   if (!cur || cur.status !== "reviewing" || !cur.precheck || cur.precheck.state !== "green" || cur.precheck.green_at !== rec.green_at) return undefined
-  releaseMergeLock(project, lock.session)
+  releaseMergeLock(project, lock.session, lock.n)
   cur.precheck = { ...cur.precheck, landed: { tip: tip.tip, at: Date.now() } }
   taskEvent(cur, "crew-harness", undefined, `замок отпущен: слияние на вершине ${short(tip.tip)} (проверенный кандидат ${short(rec.candidate)} уже в ${target}); дальше accept, уборка без замка`)
   return `merge lock of ${project} #${lock.n} released: landed on ${short(tip.tip)}`
@@ -329,7 +329,7 @@ const lockStillMine = (project: string, session: string, n: number, at?: number)
 const mayRelease = (project: string, session: string, n: number, at?: number): boolean => holdsFor(project, session, n, at) // GATE:release
 /** Отпустить замок, только если он этого вызова: замок, взятый той же сессией для другой задачи или другим вызовом для той же, не трогаем. */
 const releaseOwnLock = (project: string, session: string, n: number, at?: number): void => {
-  if (mayRelease(project, session, n, at)) releaseMergeLock(project, session)
+  if (mayRelease(project, session, n, at)) releaseMergeLock(project, session, n)
 }
 
 export type Gate = { text: string } | { granted: string }
