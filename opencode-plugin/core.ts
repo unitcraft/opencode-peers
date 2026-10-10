@@ -161,7 +161,7 @@ export const QUEUE = path.join(BASE, "queue") // queue/<роль>/*.json — п�
 for (const d of [CARDS, INBOX, READ, QUEUE]) mkdirSync(d, { recursive: true }) // delivering/ — по мере надобности
 
 export type Spawned = { by: string; task: string; tier: string; status: "running" | "done" | "closed"; at: number; qid: string }
-export type Card = { session: string; role: string; auto: boolean; spawned?: Spawned; task?: { project: string; n: number }; review?: { project: string; n: number }; titleShown?: string; title: string; directory: string; repo: string; project?: string; model?: string; modelAt?: number; modelFrom?: "request" | "db"; modelCheckedAt?: number; busy?: boolean; busySince?: number; wokeAt?: number; pid: number; updated: number }
+export type Card = { session: string; role: string; auto: boolean; spawned?: Spawned; task?: { project: string; n: number }; review?: { project: string; n: number }; titleShown?: string; title: string; directory: string; repo: string; project?: string; lock_wait?: { project: string; n: number; at: number }; model?: string; modelAt?: number; modelFrom?: "request" | "db"; modelCheckedAt?: number; busy?: boolean; busySince?: number; wokeAt?: number; pid: number; updated: number }
 export type Letter = { id: string; from_role: string; from_session: string; to: string; text: string; time: number; tier?: Tier; wake?: boolean; qid?: string; reply_to?: string }
 
 // НАСТРОЙКИ ПРОЕКТА — settings.ts: файл `.opencode/crew-harness.json` из репозитория настроек (закоммиченный),

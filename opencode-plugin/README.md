@@ -401,6 +401,13 @@ The integrator stays free for the owner and does not re-check accepted work:
   record) is already an ancestor of the target tip on `origin` (`git ls-remote` with the 20 s term and `merge-base`
   on local objects, no fetch, nothing written but the history note "замок отпущен: слияние на вершине" and a log line);
   it does nothing when the tip cannot be read, the record is not green, or the lock is held for another task; `accept`
+  The lock knows its task: `accept`, `rework`, `cancel`, `unlock` release it only for the task they act on. With
+  `merge_lock_per_task: on` (default `off`, the previous behaviour) a `merge` of another task by the holder is refused until `accept`, `rework`
+  or `unlock` of the first one (with `merge_precheck: required` the gate always does this). A reviewer refused with "lock busy" is
+  recorded in its own card (`lock_wait`, gone with the tab); when the lock is released (or found abandoned) every such live reviewer of the
+  project gets a letter "lock is free" (no queue, no reservation; the lock is still taken atomically by whoever calls `merge` first), and
+  `/crew` and the panel show one line "ждут замок: #N (мин)". A broken settings file of the old (no settings repository) form keeps the last good
+  settings and is named by `crew_doctor`.
   then does not ask for the lock (only while the record is still green and of this round: a record marked stale by `rework`, `unlock`,
   a new review or `reassign` loses the mark). The release does not depend on `stall_minutes`. It counts the merge as done once the
   candidate is in the target tip: a mark that the plan step needs in the same merge must be inside the candidate, not pushed after it. The plugin still merges and pushes nothing. The lock is issued only on the

@@ -126,7 +126,7 @@ import { createRemoteBridge } from "./remote.ts"
 import { profileProblems, profileState, stateSignature, syncProjectFiles, syncSnapshot, syncTaskFile } from "./profile-layer.ts"
 import { cellOfState, clampTier, resolveStageProfile, splitLaunchModel, stageOfLaunch, tabFitsCell } from "./profiles.ts"
 import { catalogModels, writeCatalog } from "./model-catalog.ts"
-import { ensureWorktree, fileAt, gitTraces, leftoversOf, mergeHolder, reviewLetter } from "./review.ts"
+import { ensureWorktree, fileAt, gitTraces, leftoversOf, mergeHolder, mergeLockAbandoned, reviewLetter, wakeLockWaiters } from "./review.ts"
 import { precheckLines, releaseLandedLock } from "./precheck.ts"
 import { noteLoopLag, registerJournalTools } from "./journal.ts"
 
@@ -1018,6 +1018,7 @@ export default {
         const any = list.find((x) => x.directory)
         if (!any) continue
         const lock0 = mergeHolder(project)
+        if (lock0 ? mergeLockAbandoned(project, lock0) : true) wakeLockWaiters(project, true) // брошенный замок или замка нет, а ждущие записаны: разбудить (задача 011)
         // замок слияния держит задача, чей проверенный кандидат уже в главной ветке на origin: отпустить (только чтение, 20 с)
         if (lock0 && list.some((x) => x.n === lock0.n) && !landedBusy.has(project)) {
           landedBusy.add(project)

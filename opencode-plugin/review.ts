@@ -6,7 +6,7 @@
 import { execFile, execFileSync } from "node:child_process"
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { type Card, type CrewConfig, ROLES, cardFile, extraBlock, mayWakeCard, readJson, safeKey } from "./core.ts"
+import { type Card, type CrewConfig, PLUGIN_SENDER, ROLES, allCards, cardFile, extraBlock, mayWakeCard, postLetter, readJson, safeKey, saveCard } from "./core.ts"
 import { type Task, isOpen, listTasks, loadTask, taskFile, waitingCleanup } from "./tasks.ts"
 import { roundRules } from "./plans.ts"
 
@@ -35,6 +35,7 @@ export function takeMergeLock(project: string, session: string, n: number, perTa
   const mine = JSON.stringify({ session, n, at: Date.now() })
   try {
     writeFileSync(file, mine, { flag: "wx" })
+    setLockWait(session, undefined)
     return { ok: true }
   } catch {}
   const cur = readJson<MergeLock>(file)
@@ -43,7 +44,10 @@ export function takeMergeLock(project: string, session: string, n: number, perTa
     writeFileSync(file, mine) // тот же держатель — обновить время и номер
     return { ok: true }
   }
-  if (cur && !mergeLockAbandoned(project, cur)) return { ok: false, holder: cur }
+  if (cur && !mergeLockAbandoned(project, cur)) {
+    setLockWait(session, { project, n, at: Date.now() }) // ждущий замок записывается в своей карточке (задача 011)
+    return { ok: false, holder: cur }
+  }
   const tomb = `${file}.${process.pid}.${Date.now()}.old`
   try {
     renameSync(file, tomb)
@@ -54,13 +58,14 @@ export function takeMergeLock(project: string, session: string, n: number, perTa
   rmSync(tomb, { force: true })
   try {
     writeFileSync(file, mine, { flag: "wx" })
+    setLockWait(session, undefined)
     return { ok: true }
   } catch {
     return { ok: false, holder: readJson<MergeLock>(file)! }
   }
 }
 
-function mergeLockAbandoned(project: string, lock: MergeLock): boolean {
+export function mergeLockAbandoned(project: string, lock: MergeLock): boolean {
   if (Date.now() - lock.at > MERGE_STALE_MS) return true
   const t = loadTask(project, lock.n)
   if (!t || !isOpen(t) || t.reviewer !== lock.session) return true
@@ -72,7 +77,47 @@ function mergeLockAbandoned(project: string, lock: MergeLock): boolean {
 export function releaseMergeLock(project: string, session: string, n?: number) {
   const file = mergeFile(project)
   const cur = readJson<MergeLock>(file)
-  if (cur?.session === session && (n === undefined || cur.n === n)) rmSync(file, { force: true })
+  if (cur?.session === session && (n === undefined || cur.n === n)) {
+    rmSync(file, { force: true })
+    wakeLockWaiters(project)
+  }
+}
+
+// ЖДУЩИЕ ЗАМОК (задача 011): приёмщик, получивший отказ «замок занят», записан в своей карточке (lock_wait) — отдельного хранилища и
+// очереди нет, запись живёт, пока жива вкладка (карточка закрытой вкладки не будится и в списке не числится). Замок освободился —
+// будятся ВСЕ ждущие проекта (не один): замок выдаётся атомарно, проигравший снова встанет в ждущие; резервирования места нет.
+function setLockWait(session: string, w: { project: string; n: number; at: number } | undefined) {
+  const c = readJson<Card>(cardFile(session))
+  if (!c) return
+  if (!w && !c.lock_wait) return
+  if (w && c.lock_wait?.project === w.project && c.lock_wait.n === w.n) w.at = c.lock_wait.at // ждёт с первого отказа
+  if (w) c.lock_wait = w
+  else delete c.lock_wait
+  saveCard(c)
+}
+/** Ждущие замок проекта (живые вкладки), давно ждущие первыми. */
+export function lockWaiters(project: string): { session: string; n: number; at: number }[] {
+  const h = mergeHolder(project)
+  return allCards()
+    .filter((c) => c.lock_wait?.project === project && c.session !== h?.session && mayWakeCard(c))
+    .map((c) => ({ session: c.session, n: c.lock_wait!.n, at: c.lock_wait!.at }))
+    .sort((a, b) => a.at - b.at)
+}
+/** Строка «ждут замок: #N (мин)» для /crew и панели; нет ждущих — undefined. */
+export function lockWaitLine(project: string, now = Date.now()): string | undefined {
+  const w = lockWaiters(project)
+  return w.length ? `ждут замок: ${w.map((x) => `#${x.n} (${Math.max(0, Math.round((now - x.at) / 60_000))} мин)`).join(", ")}` : undefined
+}
+/** Замок свободен: письмо «замок свободен» каждому ждущему и снять запись; замок за это время мог уйти — отказ merge запишет снова. */
+export function wakeLockWaiters(project: string, abandoned = false): number {
+  if (!abandoned && mergeHolder(project)) return 0
+  const waiters = lockWaiters(project)
+  const at = Date.now()
+  for (const w of waiters) {
+    postLetter(w.session, { id: `lock-free-${safeKey(project)}-${at}-${safeKey(w.session)}`, from_role: PLUGIN_SENDER, from_session: PLUGIN_SENDER, to: w.session, time: at, text: `Замок вливания проекта ${project} свободен. Ты ждал его для задачи #${w.n}: вызови crew_task {action: "merge", n: ${w.n}} (замок выдаётся тому, кто успел первым; проиграешь — снова встанешь в ждущие).` })
+    setLockWait(w.session, undefined)
+  }
+  return waiters.length
 }
 export const holdsMergeLock = (project: string, session: string, n?: number) => {
   const h = mergeHolder(project)
