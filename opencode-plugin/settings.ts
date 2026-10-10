@@ -264,6 +264,12 @@ export function writeSettings(folder: string, values: Record<string, any>): stri
 }
 
 /** Проблемы настроек всех проектов (crew_doctor). Вложенные корни — не проблема: вложенный проект побеждает. */
+/** Текст шага приёмки пересказывает порядок приёмки: «под замком» рядом с CI/land/посадка/гейт или «замок вливания» рядом с CI. */
+const describesAcceptanceOrder = (text: unknown) => {
+  const t = typeof text === "string" ? text : ""
+  return /под замком[^.]{0,80}(ci|land|посадк|гейт)|(ci|land|посадк|гейт)[^.]{0,80}под замком|замок вливания[^.]{0,80}ci|ci[^.]{0,80}замок вливания/i.test(t)
+}
+
 export function settingsProblems(projects: Projects): string[] {
   const out = projects.flatMap((p) => p.problems ?? [])
   for (const p of projects) if (p.legacy) out.push(`проект ${p.name}: настройки в файле с прежним именем ${p.legacy} — переименуй в .opencode/crew-harness.json (git mv) и закоммить`)
@@ -272,6 +278,9 @@ export function settingsProblems(projects: Projects): string[] {
     if (!p.dir) continue
     const raw = readSettingsFolder(p.dir).raw
     for (const n of answerNotes(raw?.answer_mode, raw?.answer_max)) out.push(`проект ${p.name}: ${n}`)
+    // порядок приёмки задаёт плагин (merge_precheck); текст шага, пересказывающий старый порядок, устареет — только предупреждение
+    if (raw?.merge_precheck !== "off" && Array.isArray(raw?.acceptance))
+      for (const a of raw.acceptance) if (a && typeof a.id === "string" && describesAcceptanceOrder(a.text)) out.push(`проект ${p.name}: шаг ${a.id} описывает порядок приёмки, он задаётся плагином (crew_help, ПРИЁМКА): оставь в шаге только проектные команды и критерии`)
   }
   const old = projects.filter((p) => !p.dir).map((p) => p.name)
   if (old.length) out.push(`проекты ${old.join(", ")} заданы прежней формой опций (имя → корень); новая — список папок настроек: "projects": ["<папка с .opencode/crew-harness.json>"], файл называет проект и root (doc/archive/plans/002-tasks.md, «Где живут настройки проекта»)`)
