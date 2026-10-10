@@ -34,6 +34,10 @@ const no = [
   "not waiting for your approval",
   "Жду результата тестов.",
   "Awaiting CI results.",
+  "Жду результата CI, посадку без вашего разрешения не делаю.",
+  "Из 8 required workflows 7 зелёные, nova-gate ещё выполняется. Жду его вердикт; посадку без вашего разрешения не делаю.",
+  "Awaiting CI, will not land without your approval.",
+  "Не просит разрешения, делает сам.",
   "Старая строка: жду вашего слова\nА1\nА2\nА3",
 ]
 for (const t of yes) { const r = status.endsWithQuestion(t); cell(`yes: ${t}`, typeof r === "string" && r.length > 0, String(r)) }
