@@ -337,7 +337,10 @@ export function reworkLetter(t: Task, text: string, by: string): string {
 // worktree; не вышло — прежний порядок (сессия в папке проекта, worktree создаёт воркер), задача не падает.
 // Асинхронно (2026-10-06): `git worktree add` на репозитории nova идёт 6–30 с, синхронный вызов держал главный поток
 // сервера — окна теряли связь («Event stream stalled»).
-export async function ensureWorktree(repoDir: string, worktree: string, branch: string, base: string): Promise<{ ok: boolean; created: boolean; error?: string }> {
+// БАЗА — ОПУБЛИКОВАННАЯ ВЕТКА (задача 022, 2026-10-11): до создания ветки плагин делает `git fetch origin <база>` (асинхронно,
+// с пределом времени) и строит ветку от origin/<база>; нет remote или fetch не вышел — прежняя локальная база и warn.
+// Локальная ветка отличается от опубликованной — note с числами (чужие коммиты и локальную ветку плагин не двигает).
+export async function ensureWorktree(repoDir: string, worktree: string, branch: string, base: string): Promise<{ ok: boolean; created: boolean; error?: string; warn?: string; note?: string }> {
   try {
     if (existsSync(worktree)) {
       const head = (await gitA(worktree, ["rev-parse", "--abbrev-ref", "HEAD"])).trim()
@@ -351,8 +354,28 @@ export async function ensureWorktree(repoDir: string, worktree: string, branch: 
     } catch {
       exists = false
     }
-    await gitA(top, exists ? ["worktree", "add", worktree, branch] : ["worktree", "add", "-b", branch, worktree, base], 120_000)
-    return { ok: true, created: true }
+    let start = base
+    let warn: string | undefined
+    let note: string | undefined
+    if (!exists) {
+      try {
+        await gitA(top, ["fetch", "--quiet", "origin", base], 60_000)
+        await gitA(top, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${base}`])
+        start = `origin/${base}`
+        try {
+          await gitA(top, ["rev-parse", "--verify", "--quiet", `refs/heads/${base}`])
+          const [ahead, behind] = (await gitA(top, ["rev-list", "--left-right", "--count", `${base}...origin/${base}`])).trim().split(/\s+/).map(Number)
+          // left = только в локальной (впереди), right = только в опубликованной (позади)
+          if (behind || ahead) note = `локальный ${base} позади на ${behind}, впереди на ${ahead} относительно origin/${base}; ветка задачи построена от origin/${base}${behind && ahead ? "; расхождение — решает человек" : ""}`
+        } catch {
+          // локальной целевой ветки нет — сравнивать не с чем
+        }
+      } catch (e: any) {
+        warn = `не удалось обновить origin/${base} (${String(e?.message ?? e).split(String.fromCharCode(10))[0].slice(0, 120)}) — ветка задачи построена от локальной ${base}`
+      }
+    }
+    await gitA(top, exists ? ["worktree", "add", worktree, branch] : ["worktree", "add", "-b", branch, worktree, start], 120_000)
+    return { ok: true, created: true, ...(warn ? { warn } : {}), ...(note ? { note } : {}) }
   } catch (e: any) {
     return { ok: false, created: false, error: String(e?.message ?? e).split("\n")[0].slice(0, 300) }
   }

@@ -1193,6 +1193,11 @@ export default {
             const w = await ensureWorktree(t.directory, t.worktree, t.branch, cfg.targetBranch)
             if (!w.ok) return refuse(`worktree ${t.worktree} не создан: ${w.error}`)
             dir = t.worktree
+            if (w.warn) log(`task #${t.n} (${t.project}): ${w.warn}`)
+            if (w.note) {
+              log(`task #${t.n} (${t.project}): ${w.note}`)
+              taskEvent(t, PLUGIN_SENDER, undefined, w.note)
+            }
             if (!t.worktree_ready) {
               t.worktree_ready = true
               saveTask(t)
