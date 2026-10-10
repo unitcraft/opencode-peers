@@ -124,7 +124,7 @@ import { type Task, taskRef, acceptedAt, ago, byPriority, createTask, rounds, sl
 import { countedOpen, waitingCleanup } from "./tasks.ts"
 import { createRemoteBridge } from "./remote.ts"
 import { profileProblems, profileState, stateSignature, syncProjectFiles, syncSnapshot, syncTaskFile } from "./profile-layer.ts"
-import { cellOfState, clampTier, resolveStageProfile, stageOfLaunch, tabFitsCell } from "./profiles.ts"
+import { cellOfState, clampTier, resolveStageProfile, splitLaunchModel, stageOfLaunch, tabFitsCell } from "./profiles.ts"
 import { catalogModels, writeCatalog } from "./model-catalog.ts"
 import { ensureWorktree, fileAt, gitTraces, leftoversOf, mergeHolder, reviewLetter } from "./review.ts"
 import { precheckLines, releaseLandedLock } from "./precheck.ts"
@@ -587,8 +587,7 @@ export default {
         // без модели от набора — spawn_models по ступени задачи, срезанной границами проекта (задача 016)
         const tierCut = clampTier(t.tier, cfg.tierBounds)
         const model = t.review_model ?? cfg.spawnModels[tierCut.tier] ?? DEFAULT_SPAWN_MODELS[tierCut.tier]
-        const [providerID, ...rest] = model.split("/")
-        await ctx.session.create({ id: t.reviewer, title: `#${t.n} приёмка ${t.title}`, location: { directory: t.directory }, metadata: { crewReview: { project: t.project, n: t.n } }, model: { providerID, id: rest.join("/") } })
+        await ctx.session.create({ id: t.reviewer, title: `#${t.n} приёмка ${t.title}`, location: { directory: t.directory }, metadata: { crewReview: { project: t.project, n: t.n } }, model: splitLaunchModel(model) })
         const now = Date.now()
         // роль сессии приёмки — по настройке reviewer (план 002.7): acceptor несёт права вливания и принятия
         const card: Card = { session: t.reviewer, role: reviewerRole(cfg), auto: false, title: `#${t.n} приёмка ${t.title}`, directory: t.directory, repo: repoLabel(t.directory), project: t.project, model, modelAt: now, modelFrom: "request", pid: process.pid, updated: now, spawned: { by: t.author, task: `приёмка #${t.n}`, tier: t.review_model ? t.tier : tierCut.tier, status: "running", at: now, qid: t.review_qid ?? "" }, review: { project: t.project, n: t.n } }
@@ -1213,8 +1212,7 @@ export default {
             }
           }
         }
-        const [providerID, ...rest] = String(t.model ?? "").split("/")
-        await ctx.session.create({ id: sid, title: `#${t.n} ${t.title}`, location: { directory: dir }, metadata: { crewTask: { project: t.project, n: t.n, attempt: t.attempt } }, ...(t.model ? { model: { providerID, id: rest.join("/") } } : {}) })
+        await ctx.session.create({ id: sid, title: `#${t.n} ${t.title}`, location: { directory: dir }, metadata: { crewTask: { project: t.project, n: t.n, attempt: t.attempt } }, ...(t.model ? { model: splitLaunchModel(String(t.model)) } : {}) })
         const now = Date.now()
         const prev = readJson<Card>(cardFile(sid))
         const card: Card = { ...(prev ?? {}), session: sid, role: t.role, auto: false, title: `#${t.n} ${t.title}`, directory: dir, repo: repoLabel(dir), project: t.project, model: t.model, modelAt: now, modelFrom: "request", pid: process.pid, updated: now, spawned: { by: t.author, task: t.goal.slice(0, 300), tier: t.tier, status: "running", at: now, qid: t.qid }, task: { project: t.project, n: t.n } }

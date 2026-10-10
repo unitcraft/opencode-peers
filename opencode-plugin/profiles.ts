@@ -65,14 +65,36 @@ export const CELL_TIERS = ["heavy", "medium", "light", "task"] as const
 export type CellTier = (typeof CELL_TIERS)[number]
 export const isCellTier = (t: any): t is CellTier => CELL_TIERS.includes(t)
 
-export const RESERVED_WORDS = ["use", "reset", "all", "list", "show", "set", "unset", "new", "rename", "delete", "check", "save", "from"]
+export const RESERVED_WORDS = ["use", "reset", "all", "list", "show", "set", "unset", "new", "rename", "delete", "check", "save", "from", "off"]
 export const SET_NAME_RE = /^[a-z0-9][a-z0-9-]{0,39}$/
 export const FAMILY_RE = /^[a-z0-9-]+$/
 export const FAMILY_BAD = ["all", "context", "output", "input"]
 export const MODEL_RE = /^[^/\s]+\/\S+$/
-const PROFILE_FIELDS = ["model", "context", "output", "input"]
+const PROFILE_FIELDS = ["model", "context", "output", "input", "variant"]
+export const VARIANT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
-export type Profile = { model: string; context?: number; output?: number; input?: number }
+export type Profile = { model: string; context?: number; output?: number; input?: number; variant?: string }
+
+/** Модель ячейки без варианта: «провайдер/id» (суффикс «#вариант» отброшен). */
+export const baseModel = (p: any): string => String(isObj(p) ? p.model ?? "" : p ?? "").split("#")[0]
+/** Вариант модели (усилие) ячейки: суффикс «#вариант» в model или поле variant; пусто — варианта нет. */
+export const variantOf = (p: any): string | undefined => {
+  const m = String(isObj(p) ? p.model ?? "" : p ?? "")
+  const i = m.indexOf("#")
+  const v = i >= 0 ? m.slice(i + 1) : isObj(p) && typeof p.variant === "string" ? p.variant : ""
+  return v || undefined
+}
+/** Строка для запуска и показа: «провайдер/id» или «провайдер/id#вариант». */
+export const modelWithVariant = (p: any): string => baseModel(p) + (variantOf(p) ? `#${variantOf(p)}` : "")
+/** Показ в таблицах: «провайдер/id · вариант». */
+export const modelText = (p: any): string => baseModel(p) + (variantOf(p) ? ` · ${variantOf(p)}` : "")
+/** Разбор строки «провайдер/id[#вариант]» для ctx.session.create. */
+export function splitLaunchModel(model: string): { providerID: string; id: string; variant?: string } {
+  const [m, ...v] = String(model ?? "").split("#")
+  const [providerID, ...rest] = m.split("/")
+  const variant = v.join("#")
+  return { providerID, id: rest.join("/"), ...(variant ? { variant } : {}) }
+}
 export type Cell = { family: string; tier: CellTier }
 export type Families = Record<string, Partial<Record<PTier, Profile>>>
 export type Sets = Record<string, Partial<Record<Stage, Cell>>>
@@ -119,7 +141,13 @@ export function invalidProfile(p: any, where: string): string | undefined {
     for (const k of ["context", "output", "input"]) if (p[k] !== undefined && !isNonNegInt(p[k])) return `${where}.${k}: целое число (в пустой записи можно не задавать)`
     return undefined
   }
-  if (!MODEL_RE.test(p.model)) return `${where}.model: «${p.model}» — нужно «провайдер/модель»`
+  const suffix = p.model.includes("#") ? p.model.slice(p.model.indexOf("#") + 1) : undefined
+  if (!MODEL_RE.test(baseModel(p))) return `${where}.model: «${p.model}» — нужно «провайдер/модель» или «провайдер/модель#вариант»`
+  if (suffix !== undefined && !VARIANT_RE.test(suffix)) return `${where}.model: вариант после «#» — буквы, цифры, точка, дефис («${p.model}»)`
+  if (p.variant !== undefined) {
+    if (typeof p.variant !== "string" || !VARIANT_RE.test(p.variant)) return `${where}.variant: строка (буквы, цифры, точка, дефис), например "low"`
+    if (suffix !== undefined && suffix !== p.variant) return `${where}: вариант задан дважды и по-разному (model «#${suffix}», variant «${p.variant}»); оставьте один способ или сделайте их равными`
+  }
   if (!isPosInt(p.context)) return `${where}.context: целое положительное число (контекст, токены)`
   if (!isPosInt(p.output)) return `${where}.output: целое положительное число (предел вывода; без него OpenCode отбросит запись окна целиком)`
   if (p.input !== undefined && !isPosInt(p.input)) return `${where}.input: целое положительное число`
@@ -364,7 +392,7 @@ export function windowsOfSet(data: Data, setName: string): { models: Map<string,
       const p = tiers[tier]
       if (!isObj(p) || isEmptyProfile(p) || !p.model) continue
       const win: Win = { context: Number(p.context), output: Number(p.output), ...(p.input !== undefined ? { input: Number(p.input) } : {}) }
-      groups.set(p.model, [...(groups.get(p.model) ?? []), { at: `${fam}/${tier}`, win }])
+      groups.set(baseModel(p), [...(groups.get(baseModel(p)) ?? []), { at: `${fam}/${tier}`, win }])
     }
   }
   for (const [model, list] of groups) {
@@ -471,7 +499,7 @@ export function resolveStageProfile(state: State | undefined, stage: Stage, opts
   const cause = cl.from ? ` (ступень ${cl.from} срезана границами проекта tier_min/tier_max до ${tier}: добавь профиль ${cell.family}/${tier} или поправь границы)` : ""
   if (!isObj(p)) return { refuse: `набор «${u.name}», этап «${STAGE_RU[stage]}»: профиля ${cell.family}/${tier} нет в справочнике${cause}; сессия не запущена` }
   if (isEmptyProfile(p)) return { refuse: `набор «${u.name}», этап «${STAGE_RU[stage]}»: профиль ${cell.family}/${tier} пуст («заполнить»)${cause}; сессия не запущена` }
-  return { model: p.model, family: cell.family, tier, set: u.name, viaSnapshot: u.viaSnapshot, window: front && !state.degraded, stage, ...(cl.from ? { clampedFrom: cl.from } : {}), ...(eff.how === "inherited" ? { how: "inherited" as const } : {}) }
+  return { model: modelWithVariant(p), family: cell.family, tier, set: u.name, viaSnapshot: u.viaSnapshot, window: front && !state.degraded, stage, ...(cl.from ? { clampedFrom: cl.from } : {}), ...(eff.how === "inherited" ? { how: "inherited" as const } : {}) }
 }
 
 /** Годится ли открытая вкладка в приёмщики по клетке: явная ступень — только семья клетки; `task` модель вкладки не проверяет. */

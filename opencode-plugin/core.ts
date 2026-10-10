@@ -96,7 +96,9 @@ export function configShowText(dir: string, fallbackName = "?", compact = false)
   // замечания к ключам answer_*: что в файле не принято (под строкой ключа)
   const answerNote = (k: string) => (k === "answer_mode" || k === "answer_max" ? answerNotes(k === "answer_mode" ? effective.answer_mode : undefined, k === "answer_max" ? effective.answer_max : undefined).map((n) => `
     ! ${n}`).join("") : "")
-  const rows = SCHEMA.map((s) => `  ${s.key} = ${shown(effective[s.key] ?? s.default)} — ${sourceOf(s.key)}${answerNote(s.key)}`)
+  // профили — не JSON в строку, а таблицы в блоке «Профили моделей» ниже; здесь только указание на них
+  const profileKeys = ["model_profiles", "profile_sets"]
+  const rows = SCHEMA.map((s) => `  ${s.key} = ${profileKeys.includes(s.key) && effective[s.key] !== undefined ? `(${Object.keys(effective[s.key] ?? {}).length} шт., таблицей ниже)` : s.key === "profile_set" && effective[s.key] === undefined ? "(не включён)" : shown(effective[s.key] ?? s.default)} — ${sourceOf(s.key)}${answerNote(s.key)}`)
   const head = p?.dir ? `Проект ${p.name}: настройки ${path.join(p.dir, ".opencode", "crew-harness.json")}, читается ветка ${p.branch} (${p.repo}).` : `Проект ${fallbackName}: прежняя форма опций — настройки из рабочей копии вверх от каталога вкладки.`
   let pending = ""
   if (p?.dir) {
@@ -110,7 +112,10 @@ export function configShowText(dir: string, fallbackName = "?", compact = false)
   } catch (e) {
     log(`profiles show failed: ${e}`)
   }
-  return `${head}\n${rows.join("\n")}${pending}${prof ? `\n${prof}` : ""}`
+  const isSummary = (l: string) => l.startsWith("Профили моделей — ")
+  const first = prof ? `${prof.split("\n").find(isSummary) ?? ""}\n` : ""
+  const body = prof.split("\n").filter((l) => !isSummary(l)).join("\n")
+  return `${first}${head}\n${rows.join("\n")}${pending}${body ? `\n${body}` : ""}`
 }
 
 // Имя репозитория каталога не меняется — git спрашиваем один раз на каталог (проход доставки идёт раз в секунду).
@@ -1054,6 +1059,7 @@ export type VerbHelp = { verb: string; usage: string; what: string; example: str
 export const SETS_VERB_HELP: VerbHelp[] = [
   { verb: "show", usage: "[имя]", what: "набор подробно: модель, ступень и контекст по этапам; без имени — включённый", example: "show cross-kimi", bare: true },
   { verb: "use", usage: "<имя>", what: "включить набор для всех этапов: имя записывается в profile_set файла проекта (без коммита)", example: "use cross-kimi" },
+  { verb: "off", usage: "", what: "выключить набор: убрать profile_set из файла проекта; модели новых сессий снова по spawn_models", example: "off", bare: true },
   { verb: "set", usage: "<имя> <этап> <семья>/<ступень>", what: "изменить клетку набора", example: "set cross-kimi develop_accept kimi/heavy" },
   { verb: "unset", usage: "<имя> <этап>", what: "убрать клетку: этап вернётся к spawn_models", example: "unset cross-kimi develop_accept" },
   { verb: "new", usage: "<имя> [from <имя>]", what: "новый набор: пустой или копия другого", example: "new my-set from default" },
@@ -1063,7 +1069,7 @@ export const SETS_VERB_HELP: VerbHelp[] = [
 ]
 export const PROFILES_VERB_HELP: VerbHelp[] = [
   { verb: "show", usage: "[<семья>]", what: "таблицу подробно или одну семью с наборами, которые на неё ссылаются", example: "show claude", bare: true },
-  { verb: "set", usage: "<семья> <ступень|all> <модель> <context> output=<n> [input=<n>]", what: "создать или изменить запись справочника; all — все три ступени", example: "set kimi heavy kimi-code-plan-global/k3-256k 220000 output=131072" },
+  { verb: "set", usage: "<семья> <ступень|all> <модель[#вариант]> <context> output=<n> [input=<n>] [variant=<вариант>]", what: "создать или изменить запись справочника; all — все три ступени", example: "set kimi heavy kimi-code-plan-global/k3-256k 220000 output=131072" },
   { verb: "new", usage: "<семья> [from <семья>]", what: "новая семья: три пустые записи или копия", example: "new codex2 from codex" },
   { verb: "rename", usage: "<а> <б>", what: "переименовать семью (ссылки наборов обновятся)", example: "rename codex2 codex3" },
   { verb: "delete", usage: "<семья> [<ступень>]", what: "удалить семью или одну ступень (если на неё нет ссылок)", example: "delete codex3" },
@@ -1131,6 +1137,12 @@ export const HELP = `crew-harness — письма между вкладками
                                 идёт по spawn_models. Настройки tier_min и tier_max (light, medium, heavy) ограничивают ступень снизу и
                                 сверху: любая ступень любого этапа и tier у crew_spawn срезается в них (срез виден в /crew-sets show и в
                                 записи задачи; tier_min выше tier_max — ошибка настройки, границы не применяются).
+  Профили и наборы (три понятия, не путать): справочник model_profiles — семья, ступень → модель (вариант: «модель#low» или поле variant), окно;
+                                набор profile_sets — раскладка этапов по семьям и ступеням (наборов в файле может быть много); включённый набор
+                                profile_set — какой набор действует сейчас (может быть не включён ни один). Справочник и наборы пишет
+                                интегратор (crew_config set); включает и выключает набор только человек (/crew-sets use, /crew-sets off).
+                                Вопрос «какие наборы есть?» — смотри crew_config show: первая строка «наборов в файле: N». Пример ответа:
+                                «в файле 7 наборов (default, claude, …), включён: нет»; не «наборов нет» — «не включён» и «нет наборов» разное.
   Глаголы (в окне — пункты меню команды):
 ${verbHelpText()}
 
@@ -2285,7 +2297,7 @@ ${lockStillYours(stillHeld.n)}` : "") }
   const crewConfig: CrewTool = {
     name: "crew_config",
     description:
-      "The project's settings (.opencode/crew-harness.json in its settings repository). guide — questions for the owner on every key (current value, options, recommendation, why): ask them in text and record the answers; show — effective values and where each comes from (default, the committed file, the local option of opencode.jsonc), plus uncommitted edits; set {values} — integrator only: checks every value and writes the working copy (null removes a key); it applies once committed to the settings branch.",
+      "The project's settings (.opencode/crew-harness.json in its settings repository). Model profiles: model_profiles = families/tiers -> model, profile_sets = named sets of stages, profile_set = the enabled set (only a person changes it, /crew-sets use|off); show prints a summary first (sets in the file: N; enabled: name or none) - never answer \"no sets\" from \"not enabled\"; details: crew_help. guide — questions for the owner on every key (current value, options, recommendation, why): ask them in text and record the answers; show — effective values and where each comes from (default, the committed file, the local option of opencode.jsonc), plus uncommitted edits; set {values} — integrator only: checks every value and writes the working copy (null removes a key); it applies once committed to the settings branch.",
     input: {
       type: "object",
       properties: {

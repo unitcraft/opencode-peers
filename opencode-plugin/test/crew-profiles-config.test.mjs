@@ -133,7 +133,17 @@ cell("AC-39 the table back, then the sets: two calls in a row", /Записан�
 // show and doctor
 commit("profiles")
 const show = await call("sesWRK", { action: "show" })
-cell("AC-13 show: the file source of the three keys and the profiles block", /model_profiles = .* — файл, ветка main/.test(show) && /profile_sets = .* — файл, ветка main/.test(show) && /profile_set = .*— по умолчанию/.test(show) && /Профили моделей: набор не включён/.test(show) && /наборы: .*cross-kimi/.test(show), show.split("\n").filter((l) => /rofil|наборы/.test(l)).join("|").slice(0, 400))
+cell("task 010 show: the first line is the summary (sets in the file, none enabled), no JSON dumps, tables and the hint how to enable", show.split("\n")[0] === "Профили моделей — наборов в файле: 4: default, cross-kimi, cross-codex, kimi-only; включён: нет (наборы есть, но ни один не включён (модели новых сессий — по spawn_models))." && !/model_profiles = \{|profile_sets = \{/.test(show) && /model_profiles = .* — файл, ветка main/.test(show) && /profile_set = \(не включён\) — по умолчанию/.test(show) && /Справочник \(семья/.test(show) && /claude\s+heavy\s+claude-code\/opus/.test(show) && /cross-kimi: develop claude\/task/.test(show) && /\/crew-sets use <имя>/.test(show) && !/наборов нет/i.test(show), show.slice(0, 900))
+{
+  // "no sets" and "not enabled" are different words
+  const saved = read().profile_sets
+  await set({ profile_sets: null })
+  commit("no sets")
+  const none = await call("sesWRK", { action: "show" })
+  cell("task 010 show: no sets in the file says so in other words than 'not enabled'", /наборов в файле: 0; включён: нет \(наборов в файле нет вообще\)/.test(none.split("\n")[0]) && !/ни один не включён/.test(none), none.slice(0, 300))
+  await set({ profile_sets: saved })
+  commit("sets back")
+}
 cell("crew_doctor: nothing to say while no set is enabled and the data is valid", !/профил|набор/i.test(await doctor("sesINT")), (await doctor("sesINT")).slice(0, 300))
 // the name comes by a commit of a person (an agent cannot set it): a set missing from the data -> row 6 reported
 const f = read()

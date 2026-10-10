@@ -22,7 +22,7 @@ export type CmdDeps = {
   catalogWhy?: string
 }
 
-export const SETS_VERBS = ["show", "use", "set", "unset", "new", "rename", "delete", "check"]
+export const SETS_VERBS = ["show", "use", "off", "set", "unset", "new", "rename", "delete", "check"]
 export const PROFILES_VERBS = ["show", "set", "new", "rename", "delete", "check"]
 /** Глаголы прежнего локального слоя: убраны вместе со слоем (ADR-0014); на них — короткий ответ, а не «неизвестный глагол». */
 const GONE_VERBS = ["save", "reset"]
@@ -163,8 +163,13 @@ function parseProfileArgs(args: string[]): P.Profile | string {
   const num = (s: string) => (/^\d+$/.test(s) ? Number(s) : NaN)
   const p: P.Profile = { model, context: num(ctxWord) }
   for (const w of rest) {
+    const vm = /^variant=(\S+)$/.exec(w)
+    if (vm) {
+      p.variant = vm[1]
+      continue
+    }
     const m = /^(output|input)=(\d+)$/.exec(w)
-    if (!m) return `лишний аргумент «${w}»: после context идут output=<n> и необязательный input=<n>`
+    if (!m) return `лишний аргумент «${w}»: после context идут output=<n>, необязательные input=<n> и variant=<вариант>`
     ;(p as any)[m[1]] = Number(m[2])
   }
   if (p.output === undefined) return "нужен output=<n> (предел вывода: без него OpenCode отбросит запись окна целиком)"
@@ -203,7 +208,7 @@ export function profilesEditVerb(dir: string, verb: string, args: string[]): { o
       return applyEdit(dir, command, ({ draft, data }) => {
         for (const t of tiers) L.dSetProfile(draft, family, t, p)
         const old = tiers.map((t) => (data.profiles as any)?.[family]?.[t]).filter(Boolean)
-        return { what: `профиль ${family}/${tierWord}: ${p.model}, ${limitsText(p as any)}${tiers.length > 1 ? " (все три ступени разом)" : ""}`, from: old.length ? old.map((x: any) => `${x.model} ${x.context}`).join("|") : undefined, to: `${p.model} ${p.context}` }
+        return { what: `профиль ${family}/${tierWord}: ${P.modelText(p)}, ${limitsText(p as any)}${tiers.length > 1 ? " (все три ступени разом)" : ""}`, from: old.length ? old.map((x: any) => `${x.model} ${x.context}`).join("|") : undefined, to: `${p.model} ${p.context}` }
       })
     }
     case "new": {
@@ -335,7 +340,7 @@ export function profilesTable(ps: L.PState): string {
     for (const t of P.PROFILE_TIERS) {
       const p = (ps.data.profiles as any)[f][t]
       if (!p) continue
-      lines.push(`  ${pad(f, 8)}${pad(t, 8)}${P.isEmptyProfile(p) ? "(пусто — заполнить)" : `${pad(p.model, 34)}${limitsText(winOf(p))}`}`)
+      lines.push(`  ${pad(f, 8)}${pad(t, 8)}${P.isEmptyProfile(p) ? "(пусто — заполнить)" : `${pad(P.modelText(p), 34)}${limitsText(winOf(p))}`}`)
     }
   if (ps.state.message) lines.push(`! ${ps.state.message}`)
   return lines.join("\n")
@@ -350,7 +355,7 @@ export function showFamily(ps: L.PState, family?: string): string {
     const p = f[t]
     if (!p) lines.push(`  ${t}: записи нет`)
     else if (P.isEmptyProfile(p)) lines.push(`  ${t}: пусто («заполнить»: ${ref(`/crew-profiles set ${family} ${t} <модель> <context> output=<n>`, "set")})`)
-    else lines.push(`  ${t}: ${p.model} — ${limitsText(winOf(p))}`)
+    else lines.push(`  ${t}: ${P.modelText(p)} — ${limitsText(winOf(p))}`)
   }
   const refs = referencing(ps.data, family)
   lines.push(refs.length ? `Ссылаются наборы: ${refs.join("; ")}` : "Ни один набор на семью не ссылается.")
@@ -383,19 +388,19 @@ export function showSet(ps: L.PState, name: string | undefined, dir: string): st
     if (cell.tier === "task") {
       // та же ступень, что выберет resolveStageProfile: клетка task на «ступень ниже» (сдача) сначала снижается, потом срезается
       const reach = (t: P.PTier) => cut(eff.lower ? (P.lowerTier(t) as P.PTier) : t)
-      lines.push(`  ${P.STAGE_RU[st]}: ${P.cellText(cell)}${how} — по ступени задачи: ${P.PROFILE_TIERS.map((t) => `${t} → ${prof(reach(t).tier)?.model ?? "нет профиля"}${reach(t).from ? " (срез границами ступеней)" : ""}`).join(", ")}`)
+      lines.push(`  ${P.STAGE_RU[st]}: ${P.cellText(cell)}${how} — по ступени задачи: ${P.PROFILE_TIERS.map((t) => `${t} → ${(prof(reach(t).tier) ? P.modelText(prof(reach(t).tier)) : "нет профиля")}${reach(t).from ? " (срез границами ступеней)" : ""}`).join(", ")}`)
       // окна — только достижимых ступеней (срезанные недостижимы)
       const live = [...new Set(P.PROFILE_TIERS.map((t) => reach(t).tier))].filter((t) => prof(t))
       if (front) {
         for (const t of live) lines.push(`      контекст профиля в рабочем дереве задачи (${t}): ${limitsText(winOf(prof(t)))}`)
       } else {
-        for (const t of live) lines.push(`      ${t}: ${winLine(prof(t).model)}`)
+        for (const t of live) lines.push(`      ${t}: ${winLine(P.baseModel(prof(t)))}`)
       }
     } else {
       const cl = cut(cell.tier)
       const p = prof(cl.tier)
-      lines.push(`  ${P.STAGE_RU[st]}: ${P.cellText(cell)}${how} → ${p?.model ?? "нет профиля"}${cl.from ? ` — срез границами ступеней: ${cl.from} → ${cl.tier}` : ""}`)
-      if (p) lines.push(front ? `      контекст профиля в рабочем дереве задачи: ${limitsText(winOf(p))}` : `      ${winLine(p.model)}`)
+      lines.push(`  ${P.STAGE_RU[st]}: ${P.cellText(cell)}${how} → ${p ? P.modelText(p) : "нет профиля"}${cl.from ? ` — срез границами ступеней: ${cl.from} → ${cl.tier}` : ""}`)
+      if (p) lines.push(front ? `      контекст профиля в рабочем дереве задачи: ${limitsText(winOf(p))}` : `      ${winLine(P.baseModel(p))}`)
     }
   }
   for (const e of P.checkData(ps.data, n).errors) lines.push(`! ${e.text}`)
@@ -461,7 +466,7 @@ function reviewerModels(data: P.Data, name: string, bounds?: P.Bounds): string[]
     for (const ref of P.referencedProfiles(c)) {
       if (c.tier === "task" && ref.tier !== "medium") continue
       const p = (data.profiles as any)?.[c.family]?.[P.clampTier(ref.tier, bounds).tier]
-      if (p && !P.isEmptyProfile(p)) out.add(p.model)
+      if (p && !P.isEmptyProfile(p)) out.add(P.baseModel(p))
     }
   }
   return [...out]
@@ -510,6 +515,21 @@ async function useSet(dir: string, name: string | undefined, deps: CmdDeps): Pro
   return lines.join("\n")
 }
 
+/** Выключить набор: убрать profile_set из рабочей копии файла проекта; модели новых сессий снова по spawn_models. */
+function offSet(dir: string): string {
+  const ps = L.profileState(dir)
+  const command = "crew-sets off"
+  if (!ps.name) return `Набор и так не включён (profile_set в файле проекта нет). Модели новых сессий — по spawn_models. Данные не тронуты.`
+  const draft = L.draftOf(ps)
+  draft.name = undefined
+  const w = L.writeDraft(ps, draft)
+  if (!w.ok) return refused(ps.project, command, w.error)
+  L.syncSnapshot(dir)
+  L.syncProjectFiles(dir)
+  commitEdit(ps.project, command, "набор выключен", ps.name, undefined)
+  return `Набор «${ps.name}» выключен: profile_set убран из файла проекта (рабочая копия, без коммита; если имя уже закоммичено, оно вернётся из коммита — закоммитьте файл или верните набор командой use). Новые сессии идут по spawn_models. Перезапуск не нужен; наборы и справочник на месте, включить снова: ${ref("/crew-sets use <имя>", "use")}.`
+}
+
 async function checkReport(dir: string, deps: CmdDeps): Promise<string> {
   const ps = L.profileState(dir)
   const root = mainFolder(dir)
@@ -531,7 +551,7 @@ async function checkReport(dir: string, deps: CmdDeps): Promise<string> {
   for (const t of P.PROFILE_TIERS) {
     const p = (ps.data.profiles as any)?.claude?.[t]
     const want = cfg.spawnModels[t] ?? DEFAULT_SPAWN_MODELS[t]
-    if (isObj(p) && !P.isEmptyProfile(p) && p.model !== want) lines.push(`! модель профиля claude/${t} (${p.model}) не равна spawn_models.${t} (${want}): набор с клетками claude/task изменит выбор моделей новых сессий`)
+    if (isObj(p) && !P.isEmptyProfile(p) && P.baseModel(p) !== want) lines.push(`! модель профиля claude/${t} (${p.model}) не равна spawn_models.${t} (${want}): набор с клетками claude/task изменит выбор моделей новых сессий`)
   }
   const models = windowsOfActive(ps)
   for (const w of await windowWarnings(ps, models, dir, deps, true)) lines.push(`! ${w}`)
@@ -565,6 +585,9 @@ async function dispatch(kind: "sets" | "profiles", dir: string, text: string, de
     case "use":
       if (kind !== "sets" || args.length !== 1) return bad("use принимает ровно одно имя набора.")
       return useSet(dir, args[0], deps)
+    case "off":
+      if (kind !== "sets" || args.length) return bad("off без аргументов.")
+      return offSet(dir)
     case "check":
       if (args.length) return bad("check без аргументов.")
       return checkReport(dir, deps)

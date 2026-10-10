@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import path from "node:path"
 import { BASE } from "./paths.ts"
 import { SETTINGS_FILE, projectFor, rawSettingsFor, workingSettings, writeSettings } from "./settings.ts"
-import { log, projectOf, settingsContext } from "./core.ts"
+import { limitsText, log, projectOf, settingsContext } from "./core.ts"
 import * as P from "./profiles.ts"
 import { type Task, listTasks } from "./tasks.ts"
 import { type SyncReport, type WindowPlan, qualifying, syncTaskWindow, syncWindows, windowNotes, windowPlanOf, windowProblems } from "./profile-windows.ts"
@@ -215,6 +215,15 @@ export function problemsOf(ps: PState): string[] {
 
 // ---- показ и проверка связей для crew_config ---------------------------------------------------------------------------
 
+/** Итог по профилям одной строкой: сколько наборов в файле и какой включён (два разных случая: наборов нет / набор не включён). */
+export function profilesSummary(dir0: string): string {
+  const ps = profileState(dir0)
+  const names = Object.keys(isObj(ps.data.sets) ? ps.data.sets : {})
+  const on = ps.name ? `включён: ${ps.name}` : "включён: нет"
+  const tail = !names.length ? "наборов в файле нет вообще" : ps.name ? "" : "наборы есть, но ни один не включён (модели новых сессий — по spawn_models)"
+  return `Профили моделей — наборов в файле: ${names.length}${names.length ? `: ${names.join(", ")}` : ""}; ${on}${tail ? ` (${tail})` : ""}.`
+}
+
 /** Блок «Профили моделей» для crew_config show и /crew-config (пусто, если у проекта нет профилей, наборов и имени). */
 export function profilesShow(dir0: string): string {
   const ps = profileState(dir0)
@@ -223,9 +232,22 @@ export function profilesShow(dir0: string): string {
   if (!has(ps.data.profiles) && !has(ps.data.sets) && !ps.name && !b?.min && !b?.max && !b?.error) return ""
   const lines: string[] = []
   if (b?.min || b?.max) lines.push(`Границы ступеней: ${b.min ? `не ниже ${b.min}` : ""}${b.min && b.max ? ", " : ""}${b.max ? `не выше ${b.max}` : ""} (tier_min, tier_max).`)
-  lines.push(`Профили моделей: ${ps.name ? `включён набор «${ps.name}» (файл проекта)` : "набор не включён"}${ps.state.row === 2 || ps.state.row === 1 ? "" : `; состояние — строка ${ps.state.row} таблицы исходов`}.`)
-  if (has(ps.data.profiles)) lines.push(`  справочник: ${Object.entries(ps.data.profiles!).map(([f, t]) => `${f} (${P.PROFILE_TIERS.filter((x) => (t as any)[x]).join("/")})`).join(", ")}`)
-  if (has(ps.data.sets)) lines.push(`  наборы: ${Object.keys(ps.data.sets!).map((n) => (n === ps.name ? `${n} *` : n)).join(", ")}`)
+  lines.push(profilesSummary(dir0))
+  lines.push(`  состояние: ${ps.name ? `включён набор «${ps.name}» (файл проекта)` : "набор не включён"}${ps.state.row === 2 || ps.state.row === 1 ? "" : `; строка ${ps.state.row} таблицы исходов`}.`)
+  if (has(ps.data.profiles)) {
+    lines.push("Справочник (семья, ступень -> модель · вариант, окно):")
+    for (const [f, t] of Object.entries(ps.data.profiles!).sort((a, b) => a[0].localeCompare(b[0])))
+      for (const tier of P.PROFILE_TIERS) {
+        const p = (t as any)[tier]
+        if (!p) continue
+        lines.push(`  ${f.padEnd(8)}${tier.padEnd(8)}${P.isEmptyProfile(p) ? "(пусто — заполнить)" : `${P.modelText(p)}, ${limitsText(p)}`}`)
+      }
+  }
+  if (has(ps.data.sets)) {
+    lines.push("Наборы (этап -> семья/ступень; * — включённый):")
+    for (const [n, s] of Object.entries(ps.data.sets!)) lines.push(`  ${n === ps.name ? "*" : " "} ${n}: ${P.cellsOf(s).map(([st, c]) => `${st} ${P.cellText(c)}`).join(", ") || "(клеток нет)"}`)
+  }
+  lines.push(ps.name ? "Выключить набор может только человек: /crew-sets off; сменить — /crew-sets use <имя>." : "Включить набор может только человек: /crew-sets use <имя> (агент crew_config set набор не включает).")
   for (const p of problemsOf(ps)) lines.push(`  ! ${p}`)
   return lines.join("\n")
 }

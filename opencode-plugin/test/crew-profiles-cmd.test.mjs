@@ -394,6 +394,20 @@ const linesBeforeGone = editLines().length
 await sets("save force")
 cell("save force is gone too: no log line", editLines().length === linesBeforeGone, "line")
 
+{
+  // task 010: the menu item "off" removes profile_set (the working copy of the file); the sets stay
+  const prevName = st().name
+  if (!prevName) await sets("use cross-kimi")
+  const linesBefore = editLines().length
+  r = await sets("off")
+  cell("task 010 off: the enabled set is switched off, profile_set is gone from the file, sets and table stay, one log line", /Набор «[a-z-]+» выключен/.test(r) && readFileJson().profile_set === undefined && st().name === undefined && !!readFileJson().profile_sets && editLines().length === linesBefore + 1, r)
+  r = await sets("off")
+  cell("task 010 off with nothing enabled: says so, no change, no log line", /и так не включён/.test(r) && editLines().length === linesBefore + 1, r)
+  r = await sets("off now")
+  cell("task 010 off takes no arguments", /off без аргументов/.test(r), r)
+  cell("task 010 the menu verbs of /crew-sets name off", /off/.test((await sets("frobnicate"))), "no off")
+  if (prevName) await sets(`use ${prevName}`)
+}
 // ---- grammar ----
 r = await sets("frobnicate")
 cell("an unknown verb: the list of the verbs, the data is untouched", /Неизвестный глагол «frobnicate»/.test(r) && /Глаголы \/crew-sets/.test(r), r)
