@@ -54,11 +54,21 @@ export function stepProgress(task: Status["task"]): string | undefined {
   return `шаги ${task.steps.filter((a) => a.result).length}/${total}`
 }
 
-/** Ответ кончается вопросом: строка с «?» в конце среди последних трёх непустых строк (за ней бывает подпись). */
+/**
+ * Фразы ожидания слова владельца без знака «?» («жду вашего разрешения», «awaiting your GO»). ЕДИНЫЙ перечень: расширяется по
+ * реальным примерам. Форма: глагол ожидания, рядом (до 60 знаков, в пределах предложения) слово о владельце или решении.
+ * Отрицание перед глаголом («не жду», «ни», «not», «no need for») не срабатывает; прошедшее («ждал») глаголом не считается.
+ */
+export const WAITING_PHRASES: RegExp[] = [
+  /(?<![а-яё])(?<!не\s)(?<!ни\s)(?:жду|ждёт|ждем|ждём|ожидаю|ожидает|ожидаем)(?![а-яё])[^.!?\n]{0,60}?(?<![а-яё])(?:вашего|владельц|разрешени|слова|решени|согласи|подтвержден|GO(?![а-яё\w]))/i,
+  /(?<![a-z])(?<!not\s)(?<!n't\s)(?<!no\s)(?:awaiting|waiting for|needs?)(?![a-z])[^.!?\n]{0,60}?(?<![a-z])(?:your|owner)(?![a-z])[^.!?\n]{0,40}?(?<![a-z])(?:GO|approval|decision|confirmation|permission)(?![a-z])/i,
+]
+
+/** Ответ кончается вопросом или фразой ожидания слова владельца: такая строка среди последних трёх непустых (за ней бывает подпись). */
 export function endsWithQuestion(text: string): string | undefined {
   const lines = text.replace(/\r/g, "").split("\n").map((l) => l.trim()).filter(Boolean)
   const tail = lines.slice(-3)
-  const i = tail.map((l) => /\?[)»"*_`]*$/.test(l)).lastIndexOf(true)
+  const i = tail.map((l) => /\?[)»"*_`]*$/.test(l) || WAITING_PHRASES.some((r) => r.test(l))).lastIndexOf(true)
   if (i < 0) return undefined
   return tail[i].length > 300 ? `${tail[i].slice(0, 300)}…` : tail[i]
 }
