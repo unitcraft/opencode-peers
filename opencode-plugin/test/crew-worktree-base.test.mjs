@@ -43,6 +43,11 @@ const r1 = await ensureWorktree(p1, path.join(tmp, "wt1"), "t1", "main")
 cell("behind: branch starts from origin/main", r1.ok && git(path.join(tmp, "wt1"), "rev-parse", "HEAD") === pub, JSON.stringify(r1))
 cell("behind: the line says behind 1, ahead 0", /позади на 1, впереди на 0 относительно origin\/main/.test(r1.note ?? ""), JSON.stringify(r1))
 cell("behind: local main is not moved", git(p1, "rev-parse", "main") !== pub)
+let track = ""
+try {
+  track = git(p1, "config", "branch.t1.merge")
+} catch {}
+cell("behind: the task branch does not track origin/main", track === "", track)
 
 // 2. diverged
 commit(p1, "local")

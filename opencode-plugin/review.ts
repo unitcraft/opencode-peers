@@ -374,7 +374,7 @@ export async function ensureWorktree(repoDir: string, worktree: string, branch: 
         warn = `не удалось обновить origin/${base} (${String(e?.message ?? e).split(String.fromCharCode(10))[0].slice(0, 120)}) — ветка задачи построена от локальной ${base}`
       }
     }
-    await gitA(top, exists ? ["worktree", "add", worktree, branch] : ["worktree", "add", "-b", branch, worktree, start], 120_000)
+    await gitA(top, exists ? ["worktree", "add", worktree, branch] : ["worktree", "add", ...(start === base ? [] : ["--no-track"]), "-b", branch, worktree, start], 120_000)
     return { ok: true, created: true, ...(warn ? { warn } : {}), ...(note ? { note } : {}) }
   } catch (e: any) {
     return { ok: false, created: false, error: String(e?.message ?? e).split("\n")[0].slice(0, 300) }
