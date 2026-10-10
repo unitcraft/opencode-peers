@@ -9,11 +9,13 @@ export const IDS_FILE = ".ids"
 const IDS_KEEP_MS = 30 * 24 * 3_600_000 // id старше 30 дней — из списка тоже вон (письма с такими id давно не ждут)
 const IDS_TRIM_BYTES = 1_000_000
 
-/** Прочитанные письма старше keepMs: id — в .ids ящика, файл — удалить. Возвращает число удалённых. */
-export function sweepRead(readDir: string, keepMs: number, now = Date.now()): number {
+/** Прочитанные письма старше keepMs: id — в .ids ящика, файл — удалить. Возвращает число удалённых. keep — письмо оставить
+ *  (неотвеченный вопрос); limit — не больше стольких удалений за вызов (остальное — со следующего). */
+export function sweepRead(readDir: string, keepMs: number, now = Date.now(), keep?: (file: string) => boolean, limit = Infinity): number {
   if (!existsSync(readDir) || !(keepMs > 0)) return 0
   let removed = 0
   for (const key of readdirSync(readDir)) {
+    if (removed >= limit) break
     const dir = path.join(readDir, key)
     let files: string[]
     try {
@@ -24,9 +26,11 @@ export function sweepRead(readDir: string, keepMs: number, now = Date.now()): nu
     const old: string[] = []
     for (const f of files) {
       try {
-        if (now - statSync(path.join(dir, f)).mtimeMs > keepMs) old.push(f)
+        const file = path.join(dir, f)
+        if (now - statSync(file).mtimeMs > keepMs && !keep?.(file)) old.push(f)
       } catch {}
     }
+    if (old.length > limit - removed) old.length = limit - removed
     if (!old.length) continue
     const idsFile = path.join(dir, IDS_FILE)
     appendFileSync(idsFile, old.map((f) => `${f.slice(0, -5)}\t${now}\n`).join(""))

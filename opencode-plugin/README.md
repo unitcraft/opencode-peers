@@ -45,6 +45,8 @@ background); a task session may run with no window at all. Formerly `opencode-pe
     "worktrees": "worktrees", "branch_name": "p{n}-{slug}", "spawn_limits": { "worker": 3 } }
   ```
 
+  The plugin option `retention_days` (default 7, `0` is off; formerly `keep_days`) makes a once-a-day pass remove delivered letters, empty mailbox folders and the cards and statuses of closed tabs older than that; open questions, undelivered letters, open tabs and task records are never touched.
+
   `local` holds machine-specific values on top of the file. The old options form
   `{ "nova": "C:/work/nova" }` still works (settings are then walked up from the tab);
   `crew_doctor` suggests the new form. **`crew_config`**: `guide` — a questionnaire for the owner on

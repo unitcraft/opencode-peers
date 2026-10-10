@@ -116,7 +116,7 @@ import {
 import { answerTurn, markInterventions } from "./answer.ts"
 import { answerModesOn } from "./answer-parse.ts"
 import { DECISION_RU, readApprovals, removeApproval } from "./approvals.ts"
-import { sweepRead } from "./housekeeping.ts"
+import { runRetention } from "./retention.ts"
 import { allSteps, nextPlanNumber, parsePlan, stepDeps } from "./plans.ts"
 import { dropWatch, openWatchesBySession, pollWatches, requestWatch, watchesOf } from "./watch.ts"
 import { endsWithQuestion, markNotified, removeStatus, saveStatus, statusOf } from "./status.ts"
@@ -995,16 +995,16 @@ export default {
       }
     }
 
-    // УБОРКА (housekeeping.ts): прочитанные письма старше keep_days (опция плагина, умолчание 7) — id в список, файл
-    // вон; раз в HOUSEKEEP_MS.
-    const KEEP_MS = (Number(ctx?.options?.keep_days) > 0 ? Number(ctx.options.keep_days) : 7) * 24 * 3_600_000
+    // УБОРКА (retention.ts): раз в сутки, по retention_days (опция плагина; прежнее имя keep_days; умолчание 7, 0 — не
+    // убирать); проверка — раз в HOUSEKEEP_MS, проход ограничен числом удалений за вызов и дозавершается со следующей проверки.
+    const RETENTION_DAYS = ctx?.options?.retention_days !== undefined ? Number(ctx.options.retention_days) : Number(ctx?.options?.keep_days ?? 7)
     const HOUSEKEEP_MS = Number(process.env.CREW_HARNESS_HOUSEKEEP_MS) || 3_600_000
     let housekeptAt = 0
     function housekeep() {
       if (now() - housekeptAt < HOUSEKEEP_MS) return
       housekeptAt = now()
-      const removed = sweepRead(READ, KEEP_MS, now())
-      if (removed) log(`housekeeping: ${removed} read letters older than ${Math.round(KEEP_MS / 86_400_000)} d removed (ids kept)`)
+      const r = runRetention(RETENTION_DAYS, now())
+      if (r?.done) log(`уборка: убрано писем ${r.letters}, папок ${r.dirs}, карточек ${r.cards}`)
     }
 
     const landedBusy = new Set<string>()
