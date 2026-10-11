@@ -306,6 +306,9 @@ export function settingsProblems(projects: Projects): string[] {
     if (!p.dir) continue
     const raw = readSettingsFolder(p.dir).raw
     for (const n of answerNotes(raw?.answer_mode, raw?.answer_max)) out.push(`проект ${p.name}: ${n}`)
+    // шаги приёмки — один источник (задача 027): и файл Канона, и тексты в настройках — ошибка; плагин берёт файл
+    if (typeof raw?.acceptance_file === "string" && raw.acceptance_file.trim() && Array.isArray(raw?.acceptance) && raw.acceptance.length)
+      out.push(`проект ${p.name}: шаги приёмки заданы и файлом Канона, и текстами в настройках: оставь один источник — acceptance_file`)
     // порядок приёмки задаёт плагин (merge_precheck); текст шага, пересказывающий старый порядок, устареет — только предупреждение
     if (raw?.merge_precheck !== "off" && Array.isArray(raw?.acceptance))
       for (const a of raw.acceptance) if (a && typeof a.id === "string" && describesAcceptanceOrder(a.text)) out.push(`проект ${p.name}: шаг ${a.id} описывает порядок приёмки, он задаётся плагином (crew_help, ПРИЁМКА): оставь в шаге только проектные команды и критерии`)

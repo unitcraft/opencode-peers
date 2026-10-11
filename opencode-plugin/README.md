@@ -504,6 +504,17 @@ which are running).
 Marks: plan `🔴 ОТКРЫТ / 🟡 В РАБОТЕ / ✅ ЗАКРЫТ / ❌ ОТМЕНЁН`, step `⏳ В РАБОТЕ / ✅ СДЕЛАНО`, criterion
 `✅ ВЫПОЛНЕНО / ⬜`, question `❔ / ✅`.
 
+**Acceptance steps from the project canon.** `acceptance_file` is a path inside the project repository; the plugin reads it from the target branch (`origin/<target>`, then the local branch; cached for a few seconds) and takes the steps from a markdown table with the columns `id | text | required`:
+
+```
+| id    | text                       | required |
+|-------|----------------------------|----------|
+| ci    | Run the project's full CI  | yes      |
+| notes | Update the changelog       | no       |
+```
+
+`id` is lowercase Latin letters, digits, `_`, `-`, unique; `required` is `yes` unless the cell says `no` / `нет` / `false` / `0` / `-` (an empty cell means required). Rows without an id (or with a bad or repeated one, or without text) are skipped with a warning in the log. If both `acceptance_file` and a non-empty `acceptance` are set, `crew_doctor` reports an error and the file wins; if the file cannot be read (not in the branch, no table), the plugin falls back to `acceptance` and logs a warning. Without `acceptance_file` nothing changes. The order of acceptance is not written in the table: the plugin sets it (`crew_help`, ACCEPTANCE). `plan_acceptance` and `plan_merge_acceptance` are separate and unchanged.
+
 **Everything is a setting.** The plan's form and process are project settings with nova's form as the default: `plan_sections`, `plan_header`, `plan_prefix`, `plan_labels`, `plan_marks`, `plan_mode_question`, `plan_acceptance`, `plan_merge_acceptance`, `plan_grades` (`{id, name, text, clean}`), `plan_approver` (owner / integrator — `crew_task plan_decide`), `plan_steps` (auto / manual), `plan_template` (a template file in the repository). `crew_config guide` asks about each.
 
 **Heavy runs.** `heavy_commands` lists substrings of commands that load the machine (full gate,

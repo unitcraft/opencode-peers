@@ -19,6 +19,7 @@ import { DECISION_RU, type Decision, writeApproval } from "./approvals.ts"
 import { DEFAULT_FORM, PLAN_ACCEPTANCE, PLAN_MERGE_ACCEPTANCE, type PlanForm, allSteps, nextPlanNumber, parsePlan, planProblems, planTemplate, roundRules } from "./plans.ts"
 import { type Task, type TaskPlan, WORKING_STATUSES, taskRef, slugify, acceptedAt, ago, byPriority, rounds, createTask, fillName, isOpen, listTasks, loadTask, plannedSessionId, saveTask, statusRu, taskEvent, taskLetterId } from "./tasks.ts"
 import { countedOpen, waitingCleanup } from "./tasks.ts"
+import { acceptanceFromFile } from "./acceptance-file.ts"
 import { acceptWarning, acceptedTip, beginPrecheck, finishPrecheck, gateMerge, landedFresh, markPrecheckStale, neighbourHints, precheckLines, unlockMerge } from "./precheck.ts"
 import { cleanupDone, cleanupSteps, fileAt, holdsMergeLock, isMerged, keptOnBranch, keptPaths, mergeHolder, releaseMergeLock, resolveKeep, reworkLetter, sameFs, takeMergeLock } from "./review.ts"
 import { WATCH_DEFAULT_MIN, WATCH_MAX_MIN, cancelWatch, machineQueue, requestWatch, timerSpec, watchesOf } from "./watch.ts"
@@ -315,6 +316,14 @@ export function planFormOf(j: any): PlanForm {
   }
 }
 
+const warned = new Map<string, number>()
+/** Предупреждение в журнал не чаще раза в 10 минут на одно и то же. */
+function warnOnce(key: string, line: string) {
+  const now = Date.now()
+  if (now - (warned.get(key) ?? 0) < 600_000) return
+  warned.set(key, now)
+  log(line)
+}
 /** Настройки проекта каталога dir (с умолчаниями). */
 export function loadConfig(dir: string): CrewConfig {
   const j = rawSettingsFor(dir, currentProjects, currentLocal) ?? {}
@@ -327,9 +336,20 @@ export function loadConfig(dir: string): CrewConfig {
   for (const t of TIER_ORDER) if (typeof j.spawn_models?.[t] === "string") spawnModels[t] = j.spawn_models[t]
   const project = projectFor(dir, currentProjects)
   const root = project ? (project.rootPath ?? project.root) : undefined
-  const acceptance: AcceptanceStep[] = Array.isArray(j.acceptance)
+  let acceptance: AcceptanceStep[] = Array.isArray(j.acceptance)
     ? j.acceptance.filter((a: any) => a && typeof a.id === "string" && typeof a.text === "string").map((a: any) => ({ id: a.id, text: a.text, required: a.required !== false }))
     : []
+  // шаги приёмки из документа Канона проекта (задача 027): файл целевой ветки главнее текстов в настройках; нет файла — откат к ним
+  if (typeof j.acceptance_file === "string" && j.acceptance_file.trim()) {
+    const target = typeof j.target_branch === "string" && j.target_branch ? j.target_branch : "main"
+    const file = j.acceptance_file.trim()
+    const got = acceptanceFromFile(dir, target, file)
+    const note = `${project?.name ?? dir}:${file}`
+    if (got) {
+      acceptance = got.steps
+      for (const w of got.warnings) warnOnce(`acceptance-file-row:${note}:${w}`, `acceptance_file ${note}: ${w}`)
+    } else warnOnce(`acceptance-file-miss:${note}`, `acceptance_file ${note}: файла со шагами нет в ${target} (или в нём нет таблицы) — беру шаги acceptance из настроек${acceptance.length ? "" : " (их нет: шагов нет)"}`)
+  }
   return {
     exclusive: new Set([...BASE_EXCLUSIVE, ...roles]),
     helpExtra: typeof j.help_extra === "string" ? j.help_extra : "",
@@ -1207,6 +1227,7 @@ accept проверяет влитое и освобождает слот accept
 merge без предпроверки отклоняется: сначала precheck. crew_task unlock {n} отпускает замок, который ты держишь для
 задачи (запись устаревает). Запись устаревает и при rework, reassign, cancel, новой приёмке. Плагин ничего не вливает и не
 пушит. Прежний порядок (merge берёт замок сразу) возвращает интегратор проекта явным ключом merge_precheck: off в настройках.
+Шаги приёмки проекта — из документа Канона (acceptance_file); порядок приёмки задаёт плагин.
 Шаги acceptance проекта порядок приёмки не описывают: его задаёт плагин (merge_precheck, accepted_slot); crew_doctor предупреждает о шаге, который его пересказывает.
 По умолчанию accepted_slot: free — принятая задача ждёт уборки и место в inflight_limit не занимает (cleanup_limit ограничивает
 число ждущих); прежнее поведение (занимает место до cleaned) — ключ accepted_slot: hold. task_extra_fields — дополнительные поля задачи проекта: crew_spawn и assign
