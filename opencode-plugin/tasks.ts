@@ -44,6 +44,8 @@ export type PrecheckRecord = {
   /** rounds(t) + attempt на момент начала: запись прежнего круга зелёной не считается */
   round: number
   candidate?: string
+  /** вершина ветки задачи в момент фиксации кандидата (задача 030): если ветка ушла дальше, кандидат устарел, когда не содержит её и не равен ей по дереву */
+  branch_tip?: string
   result?: string
   green_at?: number
   lock_on?: { tip: string; at: number }

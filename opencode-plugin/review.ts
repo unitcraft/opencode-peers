@@ -378,6 +378,7 @@ export function reworkLetter(t: Task, text: string, by: string): string {
   return [
     t.plan ? `ЗАМЕЧАНИЯ ПЕРЕПРОВЕРКИ ПЛАНА ${t.plan.n} (задача #${t.n}) от ${by}:` : t.rework_sync ? `СИНХРОНИЗАЦИЯ задачи #${t.n} «${t.title}» с целевой веткой (не доработка) от приёмщика ${by}:` : `ДОРАБОТКА задачи #${t.n} «${t.title}» (круг ${t.rework ?? 1}) от приёмщика ${by}:`,
     text,
+    ...(t.precheck?.candidate && !t.rework_sync && !t.plan ? [`Проверенный приёмщиком кандидат устареет с твоими новыми коммитами: приёмщик пересоберёт его от новой вершины ветки.`] : []),
     `Исправь в том же worktree${t.branch ? ` (ветка ${t.branch})` : ""} и сдай снова тем же отчётом: crew_send {to: "${t.author}", reply_to: "${t.qid}", text: "что исправлено, как проверено"}.`,
   ].join("\n")
 }

@@ -194,6 +194,21 @@ export function markPrecheckStale(t: Task, reason: string): void {
   t.precheck = { ...rest, state: "stale", stale: { reason, at: Date.now() } }
 }
 
+/**
+ * Ветка задачи ушла вперёд кандидата (задача 030): вершина ветки изменилась после фиксации кандидата, и она не предок кандидата и не
+ * равна ему по дереву (squash). Ветки локально нет, запись без `branch_tip` или git не ответил — не устарел (молча пропускаем).
+ * Вершина, не менявшаяся с фиксации, не проверяется: кандидата могли собрать без ветки сознательно (предупреждение в finishPrecheck).
+ */
+export function branchAheadOfCandidate(dir: string, t: Task, rec: PrecheckRecord): { branch: string; candidate: string } | undefined {
+  if (!t.branch || !rec.candidate || !rec.branch_tip) return undefined
+  const b = resolveCommit(dir, t.branch)
+  if (!b || b === rec.branch_tip) return undefined
+  if (runGit(dir, ["merge-base", "--is-ancestor", b, rec.candidate], 10_000).code !== 1) return undefined
+  const tb = runGit(dir, ["rev-parse", `${b}^{tree}`], 10_000), tc = runGit(dir, ["rev-parse", `${rec.candidate}^{tree}`], 10_000)
+  if (tb.ok && tc.ok && tb.out.trim() === tc.out.trim()) return undefined
+  return { branch: b, candidate: rec.candidate }
+}
+
 /** Замок отпущен службой, потому что проверенный кандидат уже в главной ветке: запись зелёная, этого круга и помечена `landed`. */
 export const landedFresh = (t: Task): boolean => !!t.precheck?.landed && t.precheck.state === "green" && t.precheck.round === roundOf(t)
 
@@ -258,14 +273,16 @@ export async function finishPrecheck(t: Task, session: string, target: string, i
   const rec = cur?.precheck
   if (!cur || !isLive(rec) || rec.base !== rec0.base || rec.at !== rec0.at || rec.round !== rec0.round) return refuse(REREAD)
   let warn = ""
+  let branchTip: string | undefined
   if (t.branch) {
     const b = resolveCommit(dir, t.branch) ?? resolveCommit(dir, `origin/${t.branch}`)
+    branchTip = b
     if (b && runGit(dir, ["merge-base", "--is-ancestor", b, cand], 10_000).code === 1)
       warn = ` Внимание: ветка задачи ${t.branch} не входит в кандидата (его могли собрать перебазированием или squash); приёмщик сверяет содержимое сам — это предупреждение, не отказ.`
   }
   const now = Date.now()
   const replaced = rec.state === "green"
-  cur.precheck = { state: "green", base: rec.base, at: rec.at, by: rec.by, round: rec.round, candidate: cand, result: result.slice(0, 500), green_at: now }
+  cur.precheck = { state: "green", base: rec.base, at: rec.at, by: rec.by, round: rec.round, candidate: cand, ...(branchTip ? { branch_tip: branchTip } : {}), result: result.slice(0, 500), green_at: now }
   taskEvent(cur, session, undefined, replaced ? `предпроверка: запись заменена на ${short(rec.base)} (кандидат ${short(rec.candidate ?? "")} → ${short(cand)}): ${result.slice(0, 200)}` : `предпроверка зелёная на ${short(rec.base)} (кандидат ${short(cand)}): ${result.slice(0, 200)}`)
   const moved = tip.tip !== rec.base
   return `Предпроверка зелёная на ${short(rec.base)} (кандидат ${short(cand)}, результат: ${result.slice(0, 200)}). ${
@@ -401,6 +418,17 @@ export async function gateMerge(t: Task, session: string, target: string): Promi
     const cur = loadTask(project, t.n)
     if (cur && hadLock) markPrecheckStale(cur, "кандидат не от вершины")
     return refuse(`кандидат ${short(rec.candidate)} не fast-forward от вершины ${target} под замком (${short(tip.tip)})`, `Замок не взят${hadLock ? "; запись устарела" : ""}. Собери кандидата заново от этой вершины и повтори предпроверку.`)
+  }
+  // 7c. ветка задачи ушла вперёд кандидата после его фиксации (задача 030)
+  const ahead = rec ? branchAheadOfCandidate(dir, t, rec) : undefined
+  if (ahead) {
+    releaseOwnLock(project, session, t.n, stamp)
+    const cur = loadTask(project, t.n)
+    if (cur) {
+      markPrecheckStale(cur, "ветка задачи ушла вперёд кандидата")
+      taskEvent(cur, session, undefined, `merge отказан: ветка задачи ${t.branch} (${short(ahead.branch)}) ушла вперёд кандидата ${short(ahead.candidate)}`)
+    }
+    return refuse(`ветка задачи ${t.branch} ушла вперёд кандидата: вершина ветки ${short(ahead.branch)}, кандидат ${short(ahead.candidate)}`, `Замок не взят; запись устарела. Пересобери кандидата от актуальной ветки задачи и повтори CI и precheck.`)
   }
   // 8. запись, перечитанная с диска: по-прежнему та же зелёная
   const cur = loadTask(project, t.n)
