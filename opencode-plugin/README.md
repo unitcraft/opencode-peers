@@ -826,6 +826,13 @@ Other OpenCode plugins of the same set (they work independently; together they a
 - [opencode-claude-guards](https://github.com/unitcraft/opencode-claude-guards) — the repository's Claude Code rules (hooks, permissions) in OpenCode windows
 - [opencode-claude-code-provider](https://github.com/unitcraft/opencode-claude-code-provider) — OpenCode provider `claude-code` on top of the official Claude Code
 
+## Event probe
+
+A diagnostic, off by default (task 026): `CREW_HARNESS_EVENT_PROBE=1` in the service environment, then restart.
+It subscribes to OpenCode bus events and logs `form.*`, `permission.*`, `question.*`, `session.idle|status`, `tool.*`
+lines to `%TEMP%/opencode-plugins.log` (lines start with `event probe:`). It changes no plugin behaviour.
+Details: [doc/tasks/026-crew-question/task/probe.md](../doc/tasks/026-crew-question/task/probe.md).
+
 ## Test
 
 ```sh
