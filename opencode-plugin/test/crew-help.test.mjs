@@ -51,6 +51,9 @@ for (const w of ["develop_accept", "plan_accept", "spec_accept", "delivery_accep
 }
 cell("help says the bounds clamp the tier of crew_spawn and a check stage without a cell goes by spawn_models", /tier у crew_spawn срезается/.test(help) && /этап без клетки\s+идёт по spawn_models/.test(help), "missing")
 
+// task 020: waiting for a remote CI does not load the machine and must not take the machine-queue slot
+cell("help says a remote-CI wait goes with machine: false and machine: true is for heavy commands", /удалённ\S* CI[^]*?machine: false/.test(help) && /machine: true[^]*?только для тяжёлых/.test(help), "missing")
+
 cell("the server registers no /crew-help command (it is a window command, see crew-instant-commands.test)", !commands["crew-help"] && synthetics.length === 0 && prompts.length === 0, JSON.stringify(Object.keys(commands)))
 
 const ev = { sessionID: "sesHELP01", system: [] }

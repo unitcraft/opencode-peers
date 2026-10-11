@@ -112,7 +112,9 @@ is the only way: Claude Code's own background tasks (`run_in_background`, Monito
 **The machine queue.** `machine: true` marks a command that loads the machine (a gate, a build, a full test run):
 it waits for a slot in the project's machine queue — `machine_slots` at a time (1; 0 — no limit), in the order they
 were set; the time limit counts from the start. `crew_watch` says how many are ahead, `/crew` shows it queued, the
-letter says how long it waited. Ordinary watches and other projects do not wait ([plan 002.2](../doc/archive/plans/002.2-machine-queue.md)).
+letter says how long it waited. Use it only for heavy commands: waiting for a remote CI (a `gh` or `check-push-proven-by-ci` polling loop with a pause)
+and anything else that does not load the machine goes with `machine: false`, or it holds the slot while other windows'
+heavy runs stand idle. Ordinary watches and other projects do not wait ([plan 002.2](../doc/archive/plans/002.2-machine-queue.md)).
 
 **The project's deny rules.** The command runs outside the window's permissions, so `crew_watch` checks it against
 `permissions.deny` of the project's `.claude/settings.json` (from the tab's directory up to the git root; no file — no
