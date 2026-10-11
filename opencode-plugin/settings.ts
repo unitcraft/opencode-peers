@@ -21,6 +21,7 @@ import path from "node:path"
 import { log, safeKey } from "./core.ts"
 import { answerNotes } from "./answer-parse.ts"
 import { BASE } from "./paths.ts"
+import { configDivergence, divergenceProblem } from "./config-diverge.ts"
 
 export const SETTINGS_FILE = path.join(".opencode", "crew-harness.json")
 /** прежнее имя файла настроек (до плана 005, 2026-10-06) */
@@ -312,6 +313,12 @@ export function settingsProblems(projects: Projects): string[] {
     // порядок приёмки задаёт плагин (merge_precheck); текст шага, пересказывающий старый порядок, устареет — только предупреждение
     if (raw?.merge_precheck !== "off" && Array.isArray(raw?.acceptance))
       for (const a of raw.acceptance) if (a && typeof a.id === "string" && describesAcceptanceOrder(a.text)) out.push(`проект ${p.name}: шаг ${a.id} описывает порядок приёмки, он задаётся плагином (crew_help, ПРИЁМКА): оставь в шаге только проектные команды и критерии`)
+  }
+  // расхождение файла рабочей копии с целевой веткой (задача 029): предупреждение, действуют настройки ветки
+  for (const p of projects) {
+    if (!p.dir) continue
+    const w = divergenceProblem(p.name, configDivergence(p.repo, p.file, p.branch))
+    if (w) out.push(w)
   }
   out.push(...legacyProblems(projects))
   const old = projects.filter((p) => !p.dir).map((p) => p.name)

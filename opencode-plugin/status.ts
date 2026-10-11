@@ -13,6 +13,7 @@ import path from "node:path"
 import { type Card, readJson, safeKey } from "./core.ts"
 import { BASE } from "./paths.ts"
 import { answerLines, answerSideRow } from "./answer.ts"
+import { divergenceLineFor } from "./config-diverge.ts"
 import { lockWaitLine } from "./review.ts"
 import { type Task, isOpen, listTasks, loadTask } from "./tasks.ts"
 import { type Watch, watchesOf } from "./watch.ts"
@@ -233,6 +234,8 @@ export function formatStatuses(list: Status[], now = Date.now(), first?: string)
     out.push(...answerLines(p, now))
     const lw = lockWaitLine(p, now)
     if (lw) out.push(`  ${lw}`)
+    const dv = divergenceLineFor(p)
+    if (dv) out.push(`  ${dv}`)
   }
   out.push(`(${hm(now)}; обновляется раз в несколько секунд)`)
   return out.join("\n")
@@ -361,6 +364,8 @@ export function sidebarLines(list: Status[], now = Date.now(), project?: string)
   if (auto) rows.push(auto)
   const lw = project ? lockWaitLine(project, now) : undefined
   if (lw) rows.push({ mark: " ", who: "", what: lw.replace(/ мин\)/g, "м)"), tone: "accent" })
+  const dv = project ? divergenceLineFor(project) : undefined
+  if (dv) rows.push({ mark: " ", who: "", what: dv.replace("⚠ настройки не на ветке:", "⚠ не на ветке:"), tone: "accent" })
   const waiting = mine.filter((s) => s.state === "owner").length
   // «ход» — модель думает сейчас; «ждут» — наблюдения (гейты, коммит в main), из них в очереди машины — ещё не запущены
   const working = mine.filter((s) => s.state === "working").length
