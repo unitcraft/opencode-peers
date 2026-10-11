@@ -49,14 +49,16 @@ export async function startEventProbe(ctx: any, log: (line: string) => void): Pr
     }],
   ]
   const why: string[] = []
+  let ok = 0
   for (const [name, fn] of tries) {
     try {
       await fn()
       log(`event probe: подписка оформлена способом ${name}`)
-      return
+      ok++ // пробуем оба способа: оформленный вызов ещё не значит, что события доходят
     } catch (e) {
       why.push(`${name}: ${e}`)
     }
   }
-  log(`event probe: подписка не удалась (${why.join("; ")})`)
+  if (!ok) log(`event probe: подписка не удалась (${why.join("; ")})`)
+  else if (why.length) log(`event probe: не оформлены: ${why.join("; ")}`)
 }
