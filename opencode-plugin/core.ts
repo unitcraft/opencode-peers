@@ -20,7 +20,7 @@ import { DEFAULT_FORM, PLAN_ACCEPTANCE, PLAN_MERGE_ACCEPTANCE, type PlanForm, al
 import { type Task, type TaskPlan, WORKING_STATUSES, taskRef, slugify, acceptedAt, ago, byPriority, rounds, createTask, fillName, isOpen, listTasks, loadTask, plannedSessionId, saveTask, statusRu, taskEvent, taskLetterId } from "./tasks.ts"
 import { countedOpen, waitingCleanup } from "./tasks.ts"
 import { acceptanceFromFile } from "./acceptance-file.ts"
-import { acceptWarning, acceptedTip, beginPrecheck, finishPrecheck, gateMerge, landedFresh, markPrecheckStale, neighbourHints, precheckLines, unlockMerge } from "./precheck.ts"
+import { acceptWarning, acceptedTip, beginPrecheck, finishPrecheck, gateMerge, landedFresh, landingLine, markPrecheckStale, neighbourHints, precheckLines, unlockMerge } from "./precheck.ts"
 import { cleanupDone, cleanupSteps, fileAt, holdsMergeLock, isMerged, keptOnBranch, keptPaths, mergeHolder, releaseMergeLock, resolveKeep, reworkLetter, sameFs, takeMergeLock } from "./review.ts"
 import { WATCH_DEFAULT_MIN, WATCH_MAX_MIN, cancelWatch, machineQueue, requestWatch, timerSpec, watchesOf } from "./watch.ts"
 import { watchRefusal } from "./deny.ts"
@@ -1221,7 +1221,7 @@ reviewer; места worker не занимает), и merge, accept, cleaned р
 Замок во время подготовки кандидата и CI не брать. crew_task precheck {n} замок не берёт: плагин читает вершину origin и называет её;
 влей её вместе с веткой задачи в интеграционный candidate (например, integrate/tN), прогони полный CI проекта и сохрани точный commit кандидата;
 crew_task precheck {n, candidate, result} фиксирует зелёный результат именно этого кандидата. Только после этого merge берёт замок:
-fast-forward влей в целевую ветку тот же проверенный candidate и push. Если origin tip сдвинулся, старый candidate не вливай — заново интегрируй новый tip и повтори полный CI/precheck.
+fast-forward влей в целевую ветку тот же проверенный candidate и push. Вливается ровно зафиксированный кандидат; ветка задачи может отличаться, и это не повод остановки. Если origin tip сдвинулся, старый candidate не вливай — заново интегрируй новый tip и повтори полный CI/precheck.
 accept проверяет влитое и освобождает слот accepted_slot: free; уборка выполняется отдельно, cleanup_limit ограничивает очередь до cleaned.
 Замок слияния отпускает accept (а также rework и cancel); после слияния и пуша сразу accept, уборка идёт без замка; слияние прервано до accept — unlock {n}; cleaned замок не отпускает (замка к нему уже нет). Замок держится до accept или unlock; под ним только слияние и пуш. Если проверенный кандидат уже предок вершины главной ветки на origin, служба сама отпустит замок (только чтение, без fetch, срок 20 с; вершину не прочитала, запись не «зелёная», задача другая — замок не трогает); тогда accept замка не требует.
 merge без предпроверки отклоняется: сначала precheck. crew_task unlock {n} отпускает замок, который ты держишь для
@@ -2112,7 +2112,7 @@ export function makeTools(host: CrewHost): CrewTool[] {
             // ворота: замок выдаётся только на ту вершину главной ветки, на которой кандидат уже собран и проверен (задача 005)
             const g = await gateMerge(t, me.session, tcfg.targetBranch)
             if ("text" in g) return { content: g.text }
-            return { content: `Замок вливания проекта ${project} твой, выдан на вершину ${tcfg.targetBranch} ${g.granted}. Влей ${t.branch ? `ветку ${t.branch}` : "работу"} (кандидата, проверенного на этой вершине) в ${tcfg.targetBranch}, запушь и вызови crew_task {action: "accept", n: ${t.n}, checks: {...}${t.branch ? "" : ', commit: "<хэш>"'}}. ${LOCK_RULE}` }
+            return { content: `Замок вливания проекта ${project} твой, выдан на вершину ${tcfg.targetBranch} ${g.granted}. ${landingLine(t, tcfg.targetBranch) || `Влей ${t.branch ? `ветку ${t.branch}` : "работу"} (кандидата, проверенного на этой вершине) в ${tcfg.targetBranch}, запушь`} Затем вызови crew_task {action: "accept", n: ${t.n}, checks: {...}${t.branch ? "" : ', commit: "<хэш>"'}}. ${LOCK_RULE}` }
           }
           const r = takeMergeLock(project, me.session, t.n, tcfg.mergeLockPerTask)
           if (!r.ok && r.holder.session === me.session) return { content: `Замок вливания проекта ${project} у тебя уже для задачи #${r.holder.n}: сначала accept, rework или unlock по ней (в проекте merge_lock_per_task: on).` }

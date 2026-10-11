@@ -395,6 +395,13 @@ export async function gateMerge(t: Task, session: string, target: string): Promi
     }
     return refuse(`${target} сдвинулась — предпроверка зелёная на ${short(base)}, сейчас на origin ${short(tip.tip)} (проверено ${hm(Date.now())})`, `Замок не взят${hadLock ? "; запись устарела" : ""}. Повтори предпроверку.${neighbourHints(cur ?? t, "moved")}`)
   }
+  // 7b. кандидат должен быть fast-forward от вершины под замком (код 1 — не потомок; иное — не удалось узнать, не отказ)
+  if (rec?.candidate && runGit(dir, ["merge-base", "--is-ancestor", tip.tip, rec.candidate], 10_000).code === 1) {
+    releaseOwnLock(project, session, t.n, stamp)
+    const cur = loadTask(project, t.n)
+    if (cur && hadLock) markPrecheckStale(cur, "кандидат не от вершины")
+    return refuse(`кандидат ${short(rec.candidate)} не fast-forward от вершины ${target} под замком (${short(tip.tip)})`, `Замок не взят${hadLock ? "; запись устарела" : ""}. Собери кандидата заново от этой вершины и повтори предпроверку.`)
+  }
   // 8. запись, перечитанная с диска: по-прежнему та же зелёная
   const cur = loadTask(project, t.n)
   if (!cur || !recordUnchanged(cur.precheck, rec ?? ({} as PrecheckRecord))) {
@@ -416,4 +423,13 @@ export function acceptedTip(t: Task, target: string, head?: string): string | un
   if (!tips.length) return undefined
   if (head) for (const tp of tips) if (runGit(dir, ["merge-base", "--is-ancestor", head, tp], 10_000).ok) return tp
   return tips[0]
+}
+
+/** Что влить после merge при merge_precheck: required: ровно зафиксированный кандидат (SHA); отличие ветки задачи от него — не повод остановки. */
+export function landingLine(t: Task, target: string): string {
+  const cand = t.precheck?.candidate
+  if (!cand) return ""
+  const br = t.branch ? resolveCommit(repoDir(t), t.branch) : undefined
+  const diff = t.branch && br && br !== cand ? ` Ветка задачи ${t.branch} (${short(br)}) отличается от проверенного кандидата, это нормально (squash/пересборка): влей кандидата.` : ""
+  return `Вливается ровно проверенный кандидат ${cand} (${short(cand)}): fast-forward ${target} до него и push кандидата в ${target} (git push origin ${cand}:${target}); ветку задачи не вливай.${diff}`
 }
