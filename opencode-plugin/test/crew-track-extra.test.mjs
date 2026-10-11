@@ -78,4 +78,14 @@ const accepted = () => {
   const r2 = await call("crew_task", REV, { action: "cleaned", n })
   cell("TR-5b after track the same cleaned passes and removes it", rec(n).status === "cleaned" && !existsSync(tree), r2)
 }
+// an unmerged recorded branch is not deleted (only what is already in the target branch goes)
+{
+  const n = accepted()
+  const tree = path.join(proj, "wt", `proj-${n}-unmerged`)
+  git(proj, "worktree", "add", "-q", "-b", `integrate/t${n}-precheck`, tree, "origin/main")
+  git(tree, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--allow-empty", "-q", "-m", "work not in main")
+  git(proj, "worktree", "remove", tree)
+  const r = await call("crew_task", REV, { action: "cleaned", n })
+  cell("TR-6 an unmerged side branch stays and is named", branches().includes(`integrate/t${n}-precheck`) && /не влита/.test(r), r)
+}
 await done()

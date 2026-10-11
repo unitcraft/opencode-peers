@@ -572,7 +572,7 @@ export function autoTrack(t: Task, cfg: CrewConfig, by: string): SideItem[] {
   }
 }
 /** Убрать записанное: деревья (кроме kept), затем ветки. Без force: грязное дерево не удаляется. Возвращает сделанное и не получившееся. */
-export function removeSide(t: Task): { done: string[]; failed: string[] } {
+export function removeSide(t: Task, target?: string): { done: string[]; failed: string[] } {
   const out = { done: [] as string[], failed: [] as string[] }
   const dir = existsSync(t.directory) ? t.directory : undefined
   if (!dir) return out
@@ -599,6 +599,19 @@ export function removeSide(t: Task): { done: string[]; failed: string[] } {
   for (const i of sideItems(t)) {
     if (!i.branch || !have.has(i.branch) || i.branch === t.branch) continue
     try {
+      // удаляется только влитая в целевую ветку (вершина — предок origin/<цель> или <цель>); невлитую не трогаем
+      const merged = !!target && [`origin/${target}`, target].some((ref) => {
+        try {
+          git(top, ["merge-base", "--is-ancestor", i.branch!, ref])
+          return true
+        } catch {
+          return false
+        }
+      })
+      if (!merged) {
+        out.failed.push(`ветка ${i.branch} не влита в ${target ?? "целевую ветку"}: не удалена, убери вручную после проверки`)
+        continue
+      }
       git(top, ["branch", "-D", i.branch])
       out.done.push(`ветка ${i.branch}`)
     } catch {

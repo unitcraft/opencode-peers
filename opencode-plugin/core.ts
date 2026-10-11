@@ -2249,7 +2249,7 @@ ${LOCK_FREED_ACCEPT} Дальше уборка без замка, затем cle
         const keptLine = keptNow.length ? "\n" + keptNow.map((p) => `Сохранено: ${p} (не проверялось уборкой)`).join("\n") : ""
         // записанные побочные ветки и деревья (track, автозапись): убираются здесь, кроме деревьев keep (задача 023)
         autoTrack(t, tcfg, me.session)
-        const side = tcfg.cleanup === "none" ? { done: [], failed: [] } : removeSide(t)
+        const side = tcfg.cleanup === "none" ? { done: [], failed: [] } : removeSide(t, tcfg.targetBranch)
         const sideLine = side.done.length ? `
 Убрано по записи задачи: ${side.done.join(", ")}.` : ""
         const done = cleanupDone(t, tcfg)
