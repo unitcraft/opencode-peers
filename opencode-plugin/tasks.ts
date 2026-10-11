@@ -134,10 +134,15 @@ export type Task = {
   merged_head?: string
   /** деревья, которые приёмщик сохранил как улики (cleaned {keep}): уборка их не проверяет, пока они есть (задача 005, REQ-29) */
   kept?: { path: string; at: number; by: string }[]
+  /** побочные ветки и деревья задачи (задача 023; поле `extra` занято дополнительными полями проекта): track и автозапись; cleaned убирает всё, кроме деревьев kept */
+  side?: SideItem[]
   history: TaskEvent[]
   created: number
   updated: number
 }
+
+/** запись побочной ветки или дерева задачи: branch и/или worktree, когда и кем (auto — плагин увидел сам) */
+export type SideItem = { branch?: string; worktree?: string; at: number; by: string; auto?: boolean }
 
 export const taskFile = (project: string, n: number) => path.join(TASKS, safeKey(project), `${n}.json`)
 export const loadTask = (project: string, n: number) => readJson<Task>(taskFile(project, n))

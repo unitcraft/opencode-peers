@@ -21,7 +21,7 @@ import { type Task, type TaskPlan, WORKING_STATUSES, taskRef, slugify, acceptedA
 import { countedOpen, waitingCleanup } from "./tasks.ts"
 import { acceptanceFromFile } from "./acceptance-file.ts"
 import { acceptWarning, acceptedTip, beginPrecheck, finishPrecheck, gateMerge, landedFresh, landingLine, markPrecheckStale, neighbourHints, precheckLines, unlockMerge } from "./precheck.ts"
-import { cleanupDone, cleanupSteps, fileAt, holdsMergeLock, isMerged, keptOnBranch, keptPaths, mergeHolder, releaseMergeLock, resolveKeep, reworkLetter, sameFs, takeMergeLock } from "./review.ts"
+import { addSide, autoTrack, cleanupDone, removeSide, sideItems, cleanupSteps, fileAt, holdsMergeLock, isMerged, keptOnBranch, keptPaths, mergeHolder, releaseMergeLock, resolveKeep, reworkLetter, sameFs, takeMergeLock } from "./review.ts"
 import { WATCH_DEFAULT_MIN, WATCH_MAX_MIN, cancelWatch, machineQueue, requestWatch, timerSpec, watchesOf } from "./watch.ts"
 import { watchRefusal } from "./deny.ts"
 import { queueRemote, remoteRoute } from "./remote.ts"
@@ -1219,7 +1219,7 @@ reviewer; места worker не занимает), и merge, accept, cleaned р
 приёмщик, сменивший роль, их теряет. Исполнитель задачи её не вливает и не принимает. Интегратор принятое не
 перепроверяет. Приёмщик: crew_task review → rework {text} | check {step} → проверка → check {step, result} по каждому шагу (ход видно в окне) → merge (замок вливания проекта) → accept {commit?}
 (плагин проверит обязательные шаги приёмки и что ветка или коммит в целевой ветке) → очистка → cleaned (плагин
-проверит, что worktree и ветка удалены). Улики сохранить — cleaned {n, keep:[путь, …]} (до 8 путей: worktree репозитория или папка в папке деревьев проекта; основное дерево и ветки нельзя; такое дерево уборка не проверяет, ответ: «Сохранено: <путь> (не проверялось уборкой)»); удалять их не нужно, ветку задачи удалить по-прежнему надо (если она выбрана в сохранённом дереве — там git checkout --detach, затем git branch -D; ответ cleaned подскажет). Потом сессии задачи закрываются, интегратору тихая сводка.
+проверит, что worktree и ветка удалены). Улики сохранить — cleaned {n, keep:[путь, …]} (до 8 путей: worktree репозитория или папка в папке деревьев проекта; основное дерево и ветки нельзя; такое дерево уборка не проверяет, ответ: «Сохранено: <путь> (не проверялось уборкой)»); удалять их не нужно, ветку задачи удалить по-прежнему надо (если она выбрана в сохранённом дереве — там git checkout --detach, затем git branch -D; ответ cleaned подскажет). Побочные ветки и деревья задачи (диагностические, предпроверка, итоговая ветка от опубликованной) записывает crew_task {action: "track", n, branch?, worktree?} (исполнитель, приёмщик, интегратор; без дублей; ветки integrate/tN и integrate/tN-* плагин записывает сам при precheck, accept и cleaned; список виден в view); cleaned убирает всё записанное, кроме деревьев из keep. Потом сессии задачи закрываются, интегратору тихая сводка.
 ПРЕДПРОВЕРКА ВЛИВАНИЯ (настройка проекта merge_precheck; по умолчанию required — включена). Порядок приёмщика: review → check → precheck → CI без замка → precheck candidate → merge → accept → отдельная cleanup → cleaned.
 Замок во время подготовки кандидата и CI не брать. crew_task precheck {n} замок не берёт: плагин читает вершину origin и называет её;
 влей её вместе с веткой задачи в интеграционный candidate (например, integrate/tN), прогони полный CI проекта и сохрани точный commit кандидата;
@@ -1861,17 +1861,19 @@ export function makeTools(host: CrewHost): CrewTool[] {
   const crewTask: CrewTool = {
     name: "crew_task",
     description:
-      "Tasks of the caller's project by number #N. action: list (open tasks by priority; all=true with closed), view {n} (details and history; show is the old name, still works), and for the integrator: assign {session, goal, criteria, extra?, ...} (give a task to an existing tab instead of a new session; extra {id: line} fills the project's extra task fields, see task_extra_fields in crew_config), push {n, text?} (wake a stalled executor now), reassign {n} (a new session takes the task under the same number, with a summary of what was done; with an enabled model-profile set the model is taken by the set at that moment), cancel {n, text?}, priority {n, priority}, order {to: 'project.integrator', goal, criteria, ...} (work for another project: its integrator does it with its own tasks; the order follows them); for the task's reviewer: review {n} (start), precheck {n} (on by default, merge_precheck: required; the old order is the explicit merge_precheck: off -- read the target tip first, integrate it with the task into a candidate, run full CI without a lock, then precheck {n, candidate, result} with the exact green candidate), merge {n} (merge_precheck: required by default, so merge without a green precheck is refused; only after green precheck; takes the short landing lock and lands that exact checked candidate; if the target tip moved, rebuild/recheck and never land the old candidate; merge_precheck: off takes the lock at once; the merge lock is released by accept, also by rework and cancel, unlock {n} releases it when the merge is abandoned before accept, cleaned does not release it, and the service releases it by itself once the checked candidate is already in the target tip on origin), unlock {n} (release the merge lock you hold for the task; a precheck record then becomes stale), rework {n, text, sync?} (sync: true -- only to merge the fresh target branch: not a rework round, not counted in rework_max), check {n, step} before checking a step and {n, step, result} after it (the owner sees the progress in the window), accept {n, checks?, commit?} (steps marked by check count; the plugin checks the required steps and that it is merged), cleaned {n, keep?} (the plugin checks the worktree and branch are gone; keep: [paths] -- up to 8 worktrees kept as evidence, the check skips them and the answer says \"Сохранено: <path> (не проверялось уборкой)\"; the branch must still be deleted). With accepted_slot: free, accept releases the inflight slot; run cleanup separately and call cleaned (cleanup_limit bounds the waiting cleanup); with the project's reviewer: acceptor, merge/accept/cleaned also need the acceptor (or integrator) role.",
+      "Tasks of the caller's project by number #N. action: list (open tasks by priority; all=true with closed), view {n} (details and history; show is the old name, still works), and for the integrator: assign {session, goal, criteria, extra?, ...} (give a task to an existing tab instead of a new session; extra {id: line} fills the project's extra task fields, see task_extra_fields in crew_config), push {n, text?} (wake a stalled executor now), reassign {n} (a new session takes the task under the same number, with a summary of what was done; with an enabled model-profile set the model is taken by the set at that moment), cancel {n, text?}, priority {n, priority}, order {to: 'project.integrator', goal, criteria, ...} (work for another project: its integrator does it with its own tasks; the order follows them); for the task's reviewer: review {n} (start), precheck {n} (on by default, merge_precheck: required; the old order is the explicit merge_precheck: off -- read the target tip first, integrate it with the task into a candidate, run full CI without a lock, then precheck {n, candidate, result} with the exact green candidate), merge {n} (merge_precheck: required by default, so merge without a green precheck is refused; only after green precheck; takes the short landing lock and lands that exact checked candidate; if the target tip moved, rebuild/recheck and never land the old candidate; merge_precheck: off takes the lock at once; the merge lock is released by accept, also by rework and cancel, unlock {n} releases it when the merge is abandoned before accept, cleaned does not release it, and the service releases it by itself once the checked candidate is already in the target tip on origin), unlock {n} (release the merge lock you hold for the task; a precheck record then becomes stale), rework {n, text, sync?} (sync: true -- only to merge the fresh target branch: not a rework round, not counted in rework_max), check {n, step} before checking a step and {n, step, result} after it (the owner sees the progress in the window), accept {n, checks?, commit?} (steps marked by check count; the plugin checks the required steps and that it is merged), track {n, branch?, worktree?} (executor, reviewer or integrator: record a side branch or worktree of the task, no duplicates; the plugin records integrate/t<N> and integrate/t<N>-* itself at precheck, accept and cleaned; view shows the list), cleaned {n, keep?} (removes the recorded side branches and worktrees except the kept ones, the plugin checks the worktree and branch are gone; keep: [paths] -- up to 8 worktrees kept as evidence, the check skips them and the answer says \"Сохранено: <path> (не проверялось уборкой)\"; the branch must still be deleted). With accepted_slot: free, accept releases the inflight slot; run cleanup separately and call cleaned (cleanup_limit bounds the waiting cleanup); with the project's reviewer: acceptor, merge/accept/cleaned also need the acceptor (or integrator) role.",
     input: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list", "view", "show", "assign", "order", "push", "reassign", "cancel", "priority", "plan_decide", "review", "check", "round", "merge", "unlock", "precheck", "rework", "accept", "cleaned"] },
+        action: { type: "string", enum: ["list", "view", "show", "assign", "order", "push", "reassign", "cancel", "priority", "track", "plan_decide", "review", "check", "round", "merge", "unlock", "precheck", "rework", "accept", "cleaned"] },
         to: str("order: the other project's integrator, \"project.integrator\""),
         keep: { type: "array", maxItems: 8, items: { type: "string" }, description: "cleaned: up to 8 paths of worktrees to keep as evidence (a worktree of the repository or a folder inside the project's worktree folder; absolute or from the repository root; not the main tree; no branches); the cleanup check skips them, the task's branch must still be deleted" },
         checks: { type: "object", description: "accept: report per acceptance step {step id: what proves it}", additionalProperties: { type: "string" } },
         step: str("check: the acceptance step id"),
         result: str("check: what proves the step (omit when starting the step)"),
         commit: str("accept: the commit in the target branch (squash merge); without it the task branch must be merged"),
+        branch: str("track: a side branch of the task to record (cleaned removes it)"),
+        worktree: str("track: a side worktree of the task to record (path; cleaned removes it unless it is in keep)"),
         candidate: str("precheck: the integrated candidate (branch or hash) that was built and checked on the base; with result it finishes the precheck"),
         n: { type: "number", description: "Task number" },
         session: str("assign: the tab (session id) that takes the task"),
@@ -1963,6 +1965,7 @@ export function makeTools(host: CrewHost): CrewTool[] {
           t.boundaries ? `границы: ${t.boundaries}` : "",
           t.open_questions ? `открытые вопросы: ${t.open_questions}` : "",
           extraBlock(t),
+          sideItems(t).length ? `побочные ветки и деревья (убирает cleaned): ${sideItems(t).map((i) => [i.branch ? `ветка ${i.branch}` : "", i.worktree ? `worktree ${i.worktree}` : ""].filter(Boolean).join(" + ") + (i.auto ? " (записана плагином)" : "")).join("; ")}` : "",
           ...precheckLines(t, me.session),
           t.precheck && t.precheck.state !== "stale" ? neighbourHints(t, "running").trim() : "",
           t.executors.length ? `прежние исполнители: ${t.executors.join(", ")}` : "",
@@ -1987,6 +1990,20 @@ export function makeTools(host: CrewHost): CrewTool[] {
         writeApproval({ project: t.project, n: t.n, decision: decision as Decision, ...(text ? { text } : {}) })
         host.posted([])
         return { content: `План ${t.plan.n}: ${DECISION_RU[decision as Decision]} — записано, плагин применит на ближайшем проходе.` }
+      }
+      if (action === "track") {
+        if (t.reviewer !== me.session && t.executor !== me.session && !isIntegrator(me)) return { content: `track задачи ${taskRef(t)}: исполнитель, приёмщик или интегратор.` }
+        if (t.status === "cleaned" || t.status === "cancelled") return { content: `Задача ${taskRef(t)} уже ${statusRu(t.status)}: записывать нечего.` }
+        const branch = String(input.branch ?? "").trim()
+        const worktree = String(input.worktree ?? "").trim()
+        if (!branch && !worktree) return { content: `track: нужна branch и/или worktree (путь). Записанное: ${sideItems(t).length ? sideItems(t).map((i) => i.branch ?? i.worktree).join(", ") : "пусто"}.` }
+        if (branch && branch === loadConfig(t.directory).targetBranch) return { content: `Ветка ${branch} — целевая, её записывать нельзя.` }
+        const items: { branch?: string; worktree?: string }[] = []
+        if (branch) items.push({ branch })
+        if (worktree) items.push({ worktree })
+        const added = addSide(t, items, me.session)
+        if (added.length) taskEvent(t, me.session, undefined, `записано для уборки: ${items.map((i) => i.branch ?? i.worktree).join(", ")}`)
+        return { content: added.length ? `Записано в задачу ${taskRef(t)}: ${added.map((i) => i.branch ?? i.worktree).join(", ")}. cleaned уберёт это вместе с остальным (деревья из keep остаются).` : `Уже записано в задачу ${taskRef(t)}: ${items.map((i) => i.branch ?? i.worktree).join(", ")}.` }
       }
       if (["review", "check", "round", "merge", "unlock", "precheck", "rework", "accept", "cleaned"].includes(action)) {
         // исполнитель свою работу не вливает и не принимает — отказ называет это прямо (план 002.7, п.4)
@@ -2106,7 +2123,10 @@ export function makeTools(host: CrewHost): CrewTool[] {
           if (t.plan && !(t.plan.approval && t.plan.approval.decision !== "no")) return { content: `Задача ${taskRef(t)} сейчас в раунде перепроверки плана ${t.plan.n}: вливания нет, предпроверка не нужна. Она действует на вливание согласованного плана (после решения, статус на приёмке).` }
           if (t.status !== "reviewing") return { content: `Сначала crew_task {action: "review", n: ${t.n}} (задача сейчас ${statusRu(t.status)}).` }
           const finishing = input.candidate !== undefined || input.result !== undefined
-          return { content: finishing ? await finishPrecheck(t, me.session, tcfg.targetBranch, { candidate: input.candidate, result: input.result }) : await beginPrecheck(t, me.session, tcfg.targetBranch) }
+          const pre = finishing ? await finishPrecheck(t, me.session, tcfg.targetBranch, { candidate: input.candidate, result: input.result }) : await beginPrecheck(t, me.session, tcfg.targetBranch)
+          const seen = finishing ? autoTrack(loadTask(t.project, t.n) ?? t, tcfg, me.session) : []
+          return { content: pre + (seen.length ? `
+Записано для уборки (cleaned уберёт): ${seen.map((i) => i.branch ?? i.worktree).join(", ")}.` : "") }
         }
         if (action === "unlock") return { content: unlockMerge(t, me.session) }
         if (action === "merge") {
@@ -2162,6 +2182,7 @@ export function makeTools(host: CrewHost): CrewTool[] {
           for (const [k, v] of Object.entries(input.checks ?? {})) if (String(v ?? "").trim()) checks[k] = String(v).trim()
           const missing = acc.filter((a) => a.required && !checks[a.id])
           if (missing.length) return { content: `Не принято: нет отчёта по обязательным шагам приёмки: ${missing.map((a) => `${a.id} (${a.text})`).join("; ")}. Передай checks: {"<шаг>": "чем подтверждено"}.` }
+          autoTrack(t, tcfg, me.session)
           const commit = String(input.commit ?? "").trim() || undefined
           const m = isMerged(t, tcfg.targetBranch, commit)
           if (!m.ok) return { content: `Не принято: ${m.how}. Влей и запушь, затем снова accept.` }
@@ -2226,16 +2247,22 @@ ${LOCK_FREED_ACCEPT} Дальше уборка без замка, затем cle
         }
         const keptNow = keptPaths(t).filter((p) => existsSync(p))
         const keptLine = keptNow.length ? "\n" + keptNow.map((p) => `Сохранено: ${p} (не проверялось уборкой)`).join("\n") : ""
+        // записанные побочные ветки и деревья (track, автозапись): убираются здесь, кроме деревьев keep (задача 023)
+        autoTrack(t, tcfg, me.session)
+        const side = tcfg.cleanup === "none" ? { done: [], failed: [] } : removeSide(t)
+        const sideLine = side.done.length ? `
+Убрано по записи задачи: ${side.done.join(", ")}.` : ""
         const done = cleanupDone(t, tcfg)
+        if (side.failed.length) done.ok = false
         if (!done.ok) {
           // ветка задачи выбрана в сохранённом дереве: git branch -D откажет («checked out at …»)
           const brs = done.left.map((x) => /^локальная ветка (\S+) ещё есть$/.exec(x)?.[1]).filter(Boolean) as string[]
           const held = keptOnBranch(t, brs)
           const hint = held.map((h) => `\nВетка ${h.branch} выбрана в сохранённом дереве ${h.path}: git branch -D откажет. В этом дереве выполни git checkout --detach, затем удали ветку.`).join("")
-          return { content: `Очистка не закончена: ${done.left.join("; ")}.${keptLine}${hint}` }
+          return { content: `Очистка не закончена: ${[...side.failed, ...done.left].join("; ")}.${sideLine}${keptLine}${hint}${done.left.length ? `\nЕсли это побочная ветка или дерево этой задачи, которого плагин не знал, запиши его: crew_task {action: "track", n: ${t.n}, branch или worktree: "..."} и повтори cleaned (убрать можно и вручную).` : ""}` }
         }
         const stillHeld = mergeHolder(project)
-        return { content: finishCleaned(t, me, `worktree и ветка удалены${keptNow.length ? `; сохранено: ${keptNow.join(", ")}` : ""}`) + keptLine + (stillHeld?.session === me.session ? `
+        return { content: finishCleaned(t, me, `worktree и ветка удалены${side.done.length ? `; по записи убрано: ${side.done.length}` : ""}${keptNow.length ? `; сохранено: ${keptNow.join(", ")}` : ""}`) + sideLine + keptLine + (stillHeld?.session === me.session ? `
 ${lockStillYours(stillHeld.n)}` : "") }
       }
       if (!isIntegrator(me)) return notIntegrator(me)

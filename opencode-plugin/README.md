@@ -368,6 +368,7 @@ The integrator stays free for the owner and does not re-check accepted work:
   or a branch): the check skips those trees, the answer says `Сохранено: <path> (не проверялось уборкой)`, the task record
   keeps them in `kept` and the history says `улики сохранены: <path>`; the task branch must still be deleted (if it is checked out in a kept tree, run `git checkout --detach` there first, then `git branch -D`; the answer of `cleaned` says so); a repeated
   `cleaned` without `keep` keeps skipping them while they exist;
+  Side branches and worktrees of a task (task 023): `crew_task {action: "track", n, branch?, worktree?}` (executor, reviewer, integrator; no duplicates) records them in the task's `side` list (`view` shows it; the field is `side` because `extra` holds the project's extra task fields). The plugin records `integrate/t<N>` and `integrate/t<N>-*` and the trees on them itself at precheck, accept and cleaned. `cleaned` removes everything recorded except the trees in `keep` (no force: a dirty tree is reported, not deleted); an unrecorded branch or tree that only matches the name template is still refused, and the refusal offers `track`. Records without `side` read as empty.
 - cleaned → the sessions of the task close with a line in their history, titles `#N ✓✓ готово`, the
   integrator gets a quiet summary. Titles on the way (a mark and a word): `#N ✓ сдана`, `#N ✓◐ приёмка`, `#N ↻ доработка`, `#N ✓✓◐ влита`
   accepted;

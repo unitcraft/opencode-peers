@@ -7,7 +7,7 @@ import { execFile, execFileSync } from "node:child_process"
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { type Card, type CrewConfig, PLUGIN_SENDER, ROLES, allCards, cardFile, extraBlock, mayWakeCard, postLetter, readJson, safeKey, saveCard } from "./core.ts"
-import { type Task, isOpen, listTasks, loadTask, taskFile, waitingCleanup } from "./tasks.ts"
+import { type SideItem, type Task, saveTask, isOpen, listTasks, loadTask, taskFile, waitingCleanup } from "./tasks.ts"
 import { roundRules } from "./plans.ts"
 
 const git = (cwd: string, args: string[], timeout = 15_000) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", windowsHide: true, timeout, stdio: ["ignore", "pipe", "ignore"] })
@@ -533,5 +533,77 @@ export function gitTraces(dir: string, now = Date.now()): string[] {
     if (existsSync(path.join(gitDir, "CHERRY_PICK_HEAD"))) out.push(`незаконченный cherry-pick в ${dir}: --continue или --abort`)
     if (existsSync(path.join(gitDir, "REVERT_HEAD"))) out.push(`незаконченный revert в ${dir}: --continue или --abort`)
   } catch {}
+  return out
+}
+
+// ПОБОЧНЫЕ ВЕТКИ И ДЕРЕВЬЯ В ЗАПИСИ ЗАДАЧИ (задача 023). Плагин не видит git-команд сессий (git вызывают они сами, не через
+// инструменты плагина), поэтому запись идёт двумя путями: команда track и автозапись того, что плагин находит в git сам
+// (integrate/t<N> и integrate/t<N>-*, деревья на таких ветках). cleaned убирает всё записанное, кроме деревьев kept.
+export const sideItems = (t: Task): SideItem[] => (Array.isArray(t.side) ? t.side : [])
+/** Добавить в запись без дублей (ветка и дерево сравниваются по имени и по пути); возвращает добавленное. Сохраняет задачу, если что-то добавилось. */
+export function addSide(t: Task, items: { branch?: string; worktree?: string }[], by: string, auto = false): SideItem[] {
+  const cur = sideItems(t)
+  const added: SideItem[] = []
+  for (const i of items) {
+    if (!i.branch && !i.worktree) continue
+    const dup = [...cur, ...added].some((x) => (!!i.branch && x.branch === i.branch) || (!!i.worktree && sameFs(x.worktree, i.worktree)))
+    if (dup) continue
+    added.push({ ...(i.branch ? { branch: i.branch } : {}), ...(i.worktree ? { worktree: i.worktree } : {}), at: Date.now(), by, ...(auto ? { auto: true } : {}) })
+  }
+  if (added.length) {
+    t.side = [...cur, ...added]
+    saveTask(t)
+  }
+  return added
+}
+/** Автозапись: ветки integrate/t<N>(-*) задачи и деревья на них, которых ещё нет в записи. */
+export function autoTrack(t: Task, cfg: CrewConfig, by: string): SideItem[] {
+  const dir = existsSync(t.directory) ? t.directory : undefined
+  if (!dir) return []
+  try {
+    const top = git(dir, ["rev-parse", "--show-toplevel"]).trim()
+    const integRe = new RegExp(`^integrate/t${t.n}(-.+)?$`)
+    const items: { branch?: string; worktree?: string }[] = []
+    for (const b of names(git(top, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]))) if (b !== cfg.targetBranch && integRe.test(b)) items.push({ branch: b })
+    for (const w of worktreesOf(git(top, ["worktree", "list", "--porcelain"]))) if (!samePath(w.path, top) && w.branch && integRe.test(w.branch)) items.push({ worktree: w.path.replace(/\\/g, "/") })
+    return addSide(t, items, by, true)
+  } catch {
+    return []
+  }
+}
+/** Убрать записанное: деревья (кроме kept), затем ветки. Без force: грязное дерево не удаляется. Возвращает сделанное и не получившееся. */
+export function removeSide(t: Task): { done: string[]; failed: string[] } {
+  const out = { done: [] as string[], failed: [] as string[] }
+  const dir = existsSync(t.directory) ? t.directory : undefined
+  if (!dir) return out
+  let top = dir
+  try {
+    top = git(dir, ["rev-parse", "--show-toplevel"]).trim()
+  } catch {
+    return out
+  }
+  const kept = keptPaths(t)
+  const wts = worktreesOf(git(top, ["worktree", "list", "--porcelain"]))
+  for (const i of sideItems(t)) {
+    if (!i.worktree || kept.some((k) => sameFs(k, i.worktree))) continue
+    const w = wts.find((x) => sameFs(x.path, i.worktree))
+    if (!w) continue
+    try {
+      git(top, ["worktree", "remove", w.path], 60_000)
+      out.done.push(`worktree ${w.path.replace(/\\/g, "/")}`)
+    } catch {
+      out.failed.push(`worktree ${w.path.replace(/\\/g, "/")} не удалён (есть несохранённые изменения или дерево занято); убери вручную`)
+    }
+  }
+  const have = new Set(names(git(top, ["for-each-ref", "--format=%(refname:short)", "refs/heads"])))
+  for (const i of sideItems(t)) {
+    if (!i.branch || !have.has(i.branch) || i.branch === t.branch) continue
+    try {
+      git(top, ["branch", "-D", i.branch])
+      out.done.push(`ветка ${i.branch}`)
+    } catch {
+      out.failed.push(`ветка ${i.branch} не удалена (выбрана в дереве?)`)
+    }
+  }
   return out
 }
